@@ -1,0 +1,62 @@
+# EngramOS
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data files
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# API credentials - NEVER commit
+*.key
+*.secret
+credentials.*
+
+# Original ZIP archives (extracted copies are tracked)
+ /docs.zip
+ /src.zip
+ /tests.zip
+
+# Additional local environment files
+.env.*
+!.env.example
+
+# ZIP archives - extracted folders are tracked
+/docs.zip
+/src.zip
+/tests.zip
+
+# Local environment overrides
+.env.*
+!.env.example

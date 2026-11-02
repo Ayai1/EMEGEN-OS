@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "engramOS"
+version = "0.1.0"
+description = "Temporal, provenance-aware memory system for knowledge-update retrieval"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+dependencies = [
+    "aiosqlite>=0.20.0",
+    "numpy>=1.26",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.90",
+]
+ml = [
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+]
+ui = [
+    "flask>=3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
