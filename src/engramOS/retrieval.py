@@ -388,11 +388,37 @@ def reciprocal_rank_fusion(
     ]
 
 
+def _fuse_ranked_lists(
+    channels: Mapping[str, Sequence[object]],
+    *,
+    k: int,
+    limit: int | None,
+) -> list[FusedRank]:
+    """Fuse multiple available lists; preserve a lone channel's exact ranking."""
+    available = {name: values for name, values in channels.items() if values}
+    if len(available) > 1:
+        return reciprocal_rank_fusion(available, k=k, limit=limit)
+    if not available:
+        return []
+    name, values = next(iter(available.items()))
+    output: list[FusedRank] = []
+    seen: set[str] = set()
+    for rank, candidate in enumerate(values, start=1):
+        ref_id = _candidate_id(candidate)
+        if ref_id in seen:
+            continue
+        seen.add(ref_id)
+        output.append(FusedRank(ref_id, 0.0, (name,), {name: rank}))
+        if limit is not None and len(output) >= limit:
+            break
+    return output
+
+
 def hybrid_rag(
     database: str | Path,
     history_id: str,
     query: str,
-    embedding_provider: EmbeddingProvider,
+    embedding_provider: EmbeddingProvider | None,
     *,
     top_k: int = 10,
     candidate_limit: int = 50,
@@ -414,7 +440,7 @@ def recency(
     database: str | Path,
     history_id: str,
     query: str,
-    embedding_provider: EmbeddingProvider,
+    embedding_provider: EmbeddingProvider | None,
     *,
     top_k: int = 10,
     candidate_limit: int = 50,
@@ -455,7 +481,7 @@ def retrieve_memory(
     database: str | Path,
     history_id: str,
     query: str,
-    embedding_provider: EmbeddingProvider,
+    embedding_provider: EmbeddingProvider | None,
     *,
     view: FactView = "current",
     as_of: object | None = None,
@@ -470,7 +496,6 @@ def retrieve_memory(
     timeout: float = 5.0,
 ) -> RetrievalResult:
     """Retrieve fused turns and temporal facts for an explicitly selected view."""
-    validate_embedding_provider(embedding_provider)
     _validate_scope(history_id, top_k)
     _validate_scope(history_id, fact_top_k)
     _validate_scope(history_id, turn_candidate_limit)
@@ -485,6 +510,17 @@ def retrieve_memory(
         if view == "as_of"
         else history_range
     )
+    if embedding_provider is None:
+        return _retrieve_memory_lexical(
+            database, history_id, query,
+            view=view, as_of=as_of, history_range=history_range,
+            top_k=top_k, fact_top_k=fact_top_k,
+            turn_candidate_limit=turn_candidate_limit,
+            fact_candidate_limit=fact_candidate_limit,
+            rrf_k=rrf_k, entity=entity, attribute=attribute,
+            timeout=timeout,
+        )
+    validate_embedding_provider(embedding_provider)
     query_vector = _encode_query(embedding_provider, query)
     with connection(database, timeout=timeout) as conn:
         conn.execute("BEGIN")
@@ -539,7 +575,7 @@ def retrieve_memory(
                         allowed_ids=set(eligible_facts),
                     )
                 ]
-        fact_fused = reciprocal_rank_fusion(
+        fact_fused = _fuse_ranked_lists(
             {"fact_lexical": fact_fts, "fact_dense": fact_dense},
             k=rrf_k, limit=fact_top_k,
         )
@@ -574,6 +610,78 @@ def retrieve_memory(
         )
         return RetrievalResult(
             history_id, view, "memory", tuple(turns), tuple(fused_facts), diagnostics
+        )
+
+
+def _retrieve_memory_lexical(
+    database: str | Path,
+    history_id: str,
+    query: str,
+    *,
+    view: FactView,
+    as_of: object | None,
+    history_range: TemporalRange | None,
+    top_k: int,
+    fact_top_k: int,
+    turn_candidate_limit: int,
+    fact_candidate_limit: int,
+    rrf_k: int,
+    entity: str | None,
+    attribute: str | None,
+    timeout: float,
+) -> RetrievalResult:
+    """Retrieve from FTS5 and temporal projections without touching a vector index."""
+    turn_event_range = (
+        TemporalRange(end=(
+            as_of if isinstance(as_of, TemporalBoundary)
+            else TemporalBoundary(as_of_timestamp(as_of))
+        ))
+        if view == "as_of" else history_range
+    )
+    with connection(database, timeout=timeout) as conn:
+        conn.execute("BEGIN")
+        turn_fts = _search_turns_fts(
+            conn, history_id, query, limit=turn_candidate_limit,
+            event_time_range=turn_event_range,
+        )
+        turns = _fuse_turns(turn_fts, (), top_k=top_k, rrf_k=rrf_k)
+        fact_fts = _search_facts_fts(
+            conn, history_id, query, view=view, as_of=as_of,
+            limit=fact_candidate_limit, entity=entity, attribute=attribute,
+        )
+        eligible_facts = _fact_rows_for_view(
+            conn, history_id, view=view, as_of=as_of,
+            entity=entity, attribute=attribute,
+        )
+        fact_fused = _fuse_ranked_lists(
+            {"fact_lexical": fact_fts}, k=rrf_k, limit=fact_top_k,
+        )
+        if view == "history":
+            timeline = list(_retrieve_temporal_facts(
+                conn, history_id, view="history", as_of=None,
+                entity=entity, attribute=attribute,
+            ))
+            fused_facts = _select_history_range(timeline, history_range)
+        else:
+            fused_facts = _expand_fact_evidence(
+                conn, history_id, fact_fused, eligible_facts, fact_fts, (),
+            )
+        turns, fused_facts = _revalidate_results(
+            conn, history_id, turns, fused_facts,
+            view=view, as_of=as_of, entity=entity, attribute=attribute,
+        )
+        if turn_event_range is not None:
+            turns = [turn for turn in turns if _in_range(turn.event_time, turn_event_range)]
+        diagnostics = RetrievalDiagnostics(
+            {
+                "turn_lexical": len(turn_fts), "turn_dense": 0,
+                "fact_lexical": len(fact_fts), "fact_dense": 0,
+            },
+            "none", 0, "none", rrf_k, turn_candidate_limit,
+            fact_candidate_limit, len(turns), len(fused_facts),
+        )
+        return RetrievalResult(
+            history_id, view, "memory", tuple(turns), tuple(fused_facts), diagnostics,
         )
 
 
@@ -749,7 +857,7 @@ def _retrieve_turns(
     database: str | Path,
     history_id: str,
     query: str,
-    provider: EmbeddingProvider,
+    provider: EmbeddingProvider | None,
     *,
     top_k: int,
     candidate_limit: int,
@@ -759,9 +867,26 @@ def _retrieve_turns(
     gated: bool = True,
     event_time_range: TemporalRange | None = None,
 ) -> RetrievalResult:
-    validate_embedding_provider(provider)
     _validate_scope(history_id, top_k)
     _validate_scope(history_id, candidate_limit)
+    if provider is None:
+        with connection(database, timeout=timeout) as conn:
+            conn.execute("BEGIN")
+            lexical = _search_turns_fts(
+                conn, history_id, query, limit=candidate_limit, gated=gated,
+                event_time_range=event_time_range,
+            )
+            turns = _fuse_turns(lexical, (), top_k=top_k, rrf_k=rrf_k)
+            diagnostics = RetrievalDiagnostics(
+                {"turn_lexical": len(lexical), "turn_dense": 0,
+                 "fact_lexical": 0, "fact_dense": 0},
+                "none", 0, "none", rrf_k, candidate_limit, 0,
+                len(turns), 0, gated,
+            )
+            return RetrievalResult(
+                history_id, "current", baseline, tuple(turns), (), diagnostics,
+            )
+    validate_embedding_provider(provider)
     query_vector = _encode_query(provider, query)
     with connection(database, timeout=timeout) as conn:
         conn.execute("BEGIN")
@@ -806,14 +931,16 @@ def _fuse_turns(
     top_k: int,
     rrf_k: int,
 ) -> list[RetrievedTurn]:
-    fused = reciprocal_rank_fusion(
+    fused = _fuse_ranked_lists(
         {"turn_lexical": lexical, "turn_dense": dense}, k=rrf_k, limit=top_k
     )
     lex_by_id = {item.ref_id: item for item in lexical}
     dense_by_id = {item.ref_id: item for item in dense}
     turns: list[RetrievedTurn] = []
     for item in fused:
-        candidate = dense_by_id.get(item.ref_id) or lex_by_id[item.ref_id]
+        candidate = dense_by_id.get(item.ref_id) or lex_by_id.get(item.ref_id)
+        if candidate is None:
+            continue
         record = candidate.record
         lexical_item = lex_by_id.get(item.ref_id)
         dense_item = dense_by_id.get(item.ref_id)

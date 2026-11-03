@@ -1334,3 +1334,23 @@ why the SHM timestamp changed, and there is no pre-run SHM hash for comparison.
 
 No test suite was run during final preflight; no model call was made during
 that read-only inspection.
+
+## Lexical-only retrieval and post-hoc v3 implementation — 2026-11-04
+
+`--embedding none` exercises turns/facts FTS5 BM25, temporal current/as-of and
+history projections, database identity rejection in both directions, skipped
+vector indexing, and absence of `sentence_transformers`/`torch` imports. The
+v3 runner tests use fake providers and temporary databases. They cover required
+arguments, protected run IDs and database names, existing database/results/
+progress guards, resume, smoke-preset lookup, suite-hash forwarding, and v3
+configuration. New tests: **1** v2 Reader prompt golden, **6** lexical-only,
+and **13** v3 runner tests. The complete suite passed **390 tests**.
+
+The v3 outputs are post-hoc and have not been run; the local-server and
+evaluation commands printed in the runner help were not executed.
+
+The v2 Reader cache hashes are recorded artifacts, not a byte-for-byte prompt
+rebuild check. Final rehydration inserts a current authorization timestamp into
+the Reader request, and that value is not stored in the evaluation row. The
+v2 Reader prompt is pinned from this checkout forward by the golden-string
+test; v3 is a separate post-hoc evaluation that remains pending.

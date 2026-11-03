@@ -1649,3 +1649,28 @@ unique. The relevant implementation point is the slot canonicalization and
 the extraction field is validated in `src/engramOS/extraction.py` around lines
 244–248. A cross-slot search based only on `replaces` would be ambiguous and
 is not implemented.
+
+## Lexical-only retrieval and post-hoc v3 runner — 2026-11-04
+
+`--embedding none` is an explicit retrieval identity. It skips embedding
+indexing and uses turns/facts FTS5 BM25 together with the existing temporal
+fact projection. A lone ranked list keeps its lexical order; dense-plus-lexical
+retrieval keeps the existing RRF constant. The database stores its embedding
+identity so a `none` database cannot be reused for BGE runs, or vice versa.
+
+`scripts/run_posthoc_v3.py` selects Reader context v3. Strict-untrusted gating
+and slot aliases stay off unless their flags are supplied. It requires a
+v3-prefixed run ID and explicit database path, protects the recorded v1/v2
+artifacts, and requires `--resume` to reuse an existing database or output
+file. V3 results are post-hoc and have not been run.
+
+## Engram Reader request cache limitation — 2026-11-04
+
+The pipeline records `authorization_timestamp` from `time.time()` during final
+rehydration and includes it in the Reader prompt payload. Since `llm_cache`
+hashes the complete prompt, rerunning the same Engram question produces a
+different Reader request hash. The v2 question rows and hashes remain recorded
+artifacts; they cannot be used to rebuild the original Reader prompts
+byte-for-byte. The v2 Reader prompt is now pinned for future edits by a
+fixed-fixture golden-string test. V3 is a separate post-hoc run, and its
+evaluation is pending.

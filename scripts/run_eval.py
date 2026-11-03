@@ -265,7 +265,7 @@ def _fake_reader_response(user_prompt: str) -> str:
             key = set(_TOKEN_RE.findall(str(item.get("text") or "").lower()))
             score = 5 * len(terms & attr) + 3 * len(terms & entity) + len(terms & key)
             if score:
-                fact_matches.append((score, float(metadata.get("valid_from") or 0.0), item))
+                fact_matches.append((score, _fake_time_sort_value(metadata.get("valid_from")), item))
         else:
             text_terms = set(_TOKEN_RE.findall(str(item.get("text") or "").lower()))
             score = len(terms & text_terms)
@@ -319,7 +319,21 @@ def _query_terms(query: str) -> set[str]:
     }
 
 
+def _fake_time_sort_value(value: object) -> float:
+    """Order fake-reader facts across v2 numeric and v3 ISO-date metadata."""
+    if type(value) in (int, float):
+        return float(value)
+    if type(value) is str:
+        try:
+            return float(date.fromisoformat(value).toordinal())
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _embedding_provider(kind: str):
+    if kind == "none":
+        return None
     if kind == "fake":
         return FakeEmbeddingProvider()
     if kind == "bge":
@@ -332,10 +346,28 @@ def _ensure_embedding_identity(database: str, expected_model: str) -> None:
         models = {
             str(row[0]) for row in conn.execute("SELECT DISTINCT model FROM embeddings")
         }
-    if models and models != {expected_model}:
-        raise ValueError(
-            "database already contains a different embedding identity; use a separate DB "
-            f"(found={sorted(models)!r}, requested={expected_model!r})"
+        metadata = conn.execute(
+            "SELECT value FROM database_metadata WHERE key='embedding_identity'"
+        ).fetchone()
+        stored_identity = str(metadata[0]) if metadata is not None else None
+        if stored_identity is not None and stored_identity != expected_model:
+            raise ValueError(
+                "database already uses a different embedding identity; use a separate DB "
+                f"(found={stored_identity!r}, requested={expected_model!r})"
+            )
+        if models and models != {expected_model}:
+            raise ValueError(
+                "database already contains a different embedding identity; use a separate DB "
+                f"(found={sorted(models)!r}, requested={expected_model!r})"
+            )
+        if expected_model == "none" and models:
+            raise ValueError(
+                "database contains dense embeddings and cannot use embedding identity 'none'; "
+                f"found={sorted(models)!r}"
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO database_metadata(key, value) VALUES ('embedding_identity', ?)",
+            (expected_model,),
         )
 
 
@@ -355,6 +387,7 @@ def run_evaluation(
     systems: Sequence[str] | None = None,
     context_version: str = "v2",
     strict_untrusted: bool = False,
+    slot_aliases: bool = False,
     expect_suite_sha256: str | None = None,
 ) -> dict[str, Any]:
     suite_bytes = Path(suite_path).read_bytes()
@@ -371,8 +404,8 @@ def run_evaluation(
         raise ValueError("suite changed while it was being loaded")
     if context_version not in {"v2", "v3"}:
         raise ValueError("context_version must be 'v2' or 'v3'")
-    if type(strict_untrusted) is not bool:
-        raise TypeError("strict_untrusted must be a bool")
+    if type(strict_untrusted) is not bool or type(slot_aliases) is not bool:
+        raise TypeError("strict_untrusted and slot_aliases must be bool values")
     stats = suite_stats(suite)
     selected_systems = tuple(systems or SYSTEMS)
     if not selected_systems or len(set(selected_systems)) != len(selected_systems) or any(
@@ -391,7 +424,8 @@ def run_evaluation(
         raise ValueError("authored suite size is outside the locked benchmark bounds")
     initialize_database(database)
     embedding = _embedding_provider(embedding_kind)
-    _ensure_embedding_identity(database, embedding.model_id)
+    embedding_identity = embedding.model_id if embedding is not None else "none"
+    _ensure_embedding_identity(database, embedding_identity)
     evaluator = DefaultSignalEvaluator()
     resume_info: dict[str, Any] = {"reused_results": 0, "superseded_failures": []}
     if resume_from_run_id:
@@ -417,8 +451,10 @@ def run_evaluation(
                 recorded_at=day_recorded,
                 quarantine_policy="isolate",
                 strict_untrusted=strict_untrusted,
+                slot_aliases=slot_aliases,
             )
-        index_history(database, history["history_id"], embedding, gated=False)
+        if embedding is not None:
+            index_history(database, history["history_id"], embedding, gated=False)
 
     if mode == "offline":
         reader = CachedFakeReader(database, run_id)
@@ -614,7 +650,8 @@ def run_evaluation(
                 "schema_version": RUN_SCHEMA_VERSION,
                 "suite_sha256": suite_sha256,
                 "question_date": question_date.isoformat(),
-                "embedding_model": embedding.model_id,
+                "embedding": embedding_kind,
+                "embedding_model": embedding_identity,
                 "reader_model": reader.model,
                 "classifier_model": classifier.model,
                 "judge": "rule-based-expected-substring-v1",
@@ -625,6 +662,7 @@ def run_evaluation(
                 "bridge_tau": evaluator.bridge_tau,
                 "context_version": context_version,
                 "strict_untrusted": strict_untrusted,
+                "slot_aliases": slot_aliases,
                 "temperature": 0.0 if mode == "offline" else (local_settings.temperature if local_settings else 0.0),
                 "mode": mode,
                 "credits_mode": "local" if mode == "local" else "offline_fake",
@@ -1458,7 +1496,7 @@ def _binomial_tail(successes: int, trials: int, p: float, *, upper_tail: bool) -
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("offline", "local"), default="offline")
-    parser.add_argument("--embedding", choices=("fake", "bge"), default=None)
+    parser.add_argument("--embedding", choices=("fake", "bge", "none"), default=None)
     parser.add_argument("--database", help="SQLite file; fake and BGE embeddings must use separate files")
     parser.add_argument("--run-id", default="authored-offline-v1")
     parser.add_argument("--suite", default=str(EXPANDED_SUITE_PATH))
@@ -1469,6 +1507,7 @@ def main() -> int:
     parser.add_argument("--provider-timeout", type=float, default=300.0)
     parser.add_argument("--context-version", choices=("v2", "v3"), default="v2")
     parser.add_argument("--strict-untrusted", action="store_true")
+    parser.add_argument("--slot-aliases", action="store_true")
     parser.add_argument(
         "--expect-suite-sha256",
         help="abort unless the loaded suite file has this SHA-256 digest",
@@ -1495,6 +1534,8 @@ def main() -> int:
     database = args.database or str(
         PROJECT_ROOT / "eval" / (
             "offline-fake-v2.sqlite3" if embedding_kind == "fake"
+            else "offline-none-v2.sqlite3" if embedding_kind == "none" and args.mode == "offline"
+            else "local-q4-no-embedding.sqlite3" if embedding_kind == "none"
             else "local-q4-phase3-classifier1024.sqlite3" if args.mode == "local"
             else "offline-bge-v2.sqlite3"
         )
@@ -1552,6 +1593,7 @@ def main() -> int:
         systems=selected_systems,
         context_version=args.context_version,
         strict_untrusted=args.strict_untrusted,
+        slot_aliases=args.slot_aliases,
         expect_suite_sha256=args.expect_suite_sha256,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))

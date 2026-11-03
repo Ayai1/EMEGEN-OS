@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import sys
+import subprocess
 from pathlib import Path
 import tempfile
 import threading
@@ -231,6 +232,74 @@ class RetrievalTests(unittest.TestCase):
         )
         paris = next(result for result in history_view.facts if result.fact["value"] == "Paris")
         self.assertEqual(paris.annotation, f"[valid: {start - 60} -> {start + 86_400.0}]")
+
+    def test_lexical_only_retrieval_finds_an_exact_fact_term(self) -> None:
+        turn_id = self.add_turn(
+            "My current city is Albany.", event_time=100, turn_id="lexical-city",
+            session_id="lexical-city",
+        )
+        self.add_fact(turn_id, "lexical-city-fact", "Albany", 100)
+
+        result = retrieve_memory(self.database, "h1", "user.city Albany", None)
+
+        self.assertEqual([item.fact["value"] for item in result.facts], ["Albany"])
+        self.assertEqual(result.facts[0].channels, ("fact_lexical",))
+        self.assertEqual(result.facts[0].rrf_score, 0.0)
+        self.assertEqual(result.diagnostics.embedding_model, "none")
+        self.assertEqual(result.diagnostics.channel_candidate_counts["fact_dense"], 0)
+
+    def test_lexical_only_retrieval_preserves_a_b_a_and_as_of_projection(self) -> None:
+        for turn_id, fact_id, value, timestamp in (
+            ("city-a1", "city-fact-a1", "Albany", 100),
+            ("city-b", "city-fact-b", "Boston", 200),
+            ("city-a2", "city-fact-a2", "Albany", 300),
+        ):
+            turn = self.add_turn(
+                f"My city is {value}.", event_time=timestamp, turn_id=turn_id,
+                session_id=turn_id,
+            )
+            self.add_fact(turn, fact_id, value, timestamp)
+
+        current = retrieve_memory(self.database, "h1", "user.city Albany", None)
+        as_of_b = retrieve_memory(
+            self.database, "h1", "user.city Boston", None,
+            view="as_of", as_of=250,
+        )
+        history = retrieve_memory(
+            self.database, "h1", "no matching term", None, view="history",
+        )
+
+        self.assertEqual([item.fact["value"] for item in current.facts], ["Albany"])
+        self.assertEqual([item.fact["value"] for item in as_of_b.facts], ["Boston"])
+        self.assertEqual([item.fact["value"] for item in history.facts], ["Albany", "Boston", "Albany"])
+
+    def test_embedding_none_retrieval_does_not_import_model_libraries(self) -> None:
+        turn_id = self.add_turn(
+            "My current city is Albany.", event_time=100, turn_id="no-model-city",
+            session_id="no-model-city",
+        )
+        self.add_fact(turn_id, "no-model-city-fact", "Albany", 100)
+        script = """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path.cwd() / 'src'))
+from scripts.run_eval import _embedding_provider
+from engramOS.retrieval import retrieve_memory
+provider = _embedding_provider('none')
+assert provider is None
+result = retrieve_memory(sys.argv[1], 'h1', 'user.city Albany', provider)
+assert [item.fact['value'] for item in result.facts] == ['Albany']
+assert 'sentence_transformers' not in sys.modules
+assert 'torch' not in sys.modules
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script, self.database],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_as_of_temporal_retrieval_excludes_future_multi_observation(self) -> None:
         earlier_turn = self.add_turn(

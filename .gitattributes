@@ -1,0 +1,2 @@
+# Suite digests are computed from raw bytes; keep them stable on Windows.
+eval/suite*.json text eol=lf

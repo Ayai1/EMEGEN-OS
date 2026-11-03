@@ -154,6 +154,13 @@ CREATE TABLE IF NOT EXISTS embeddings (
   PRIMARY KEY (ref_type, ref_id, model)
 );
 
+-- Keep one retrieval identity even when the selected mode has no vectors, so
+-- lexical-only and dense runs cannot be mixed accidentally.
+CREATE TABLE IF NOT EXISTS database_metadata (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 -- 4. Quarantine / gate decisions (audit trail, also powers the demo) ----------
 CREATE TABLE IF NOT EXISTS gate_events (
   event_id       INTEGER PRIMARY KEY AUTOINCREMENT,

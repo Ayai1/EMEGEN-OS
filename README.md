@@ -204,3 +204,28 @@ extraction quality.
 The post-hoc local runner accepts `--reader-max-tokens`,
 `--classifier-max-tokens`, and `--reasoning-budget` when lower resource caps
 are needed. Their recorded defaults remain 2,048, 1,024, and 512 respectively.
+
+## Running without non-Meta models (`--embedding none`)
+
+Pass `--embedding none` to skip embedding indexing and use FTS5 BM25 with the
+existing temporal projection. This mode does not import or load
+`sentence_transformers` or `torch`, and its database identity cannot be mixed
+with a BGE database. At the retrieval/library level, it lets an application
+use Meta Reader/classifier adapters without adding a separate BGE embedding
+model. The standalone `run_eval.py` runner still selects its local or offline
+providers with `--mode`.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_eval.py --mode local --embedding none --database eval\local-q4-no-embedding.sqlite3 --run-id q4-local-lexical-v1 --suite eval\suite_v2.json
+```
+
+The v3 post-hoc runner is implemented; its evaluation is pending. It defaults
+to BGE and keeps strict-untrusted mode and slot aliases off. Its smoke command
+is:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_posthoc_v3.py --database eval\local-q4-posthoc-v3.sqlite3 --run-id q4-post-hoc-v3-smoke --preset smoke
+```
+
+Run `scripts/run_posthoc_v3.py --help` for the full-suite and held-out
+commands. V3 results are post-hoc and have not been run.

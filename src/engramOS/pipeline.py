@@ -54,7 +54,7 @@ def answer_query(
     database: str | Path,
     history_id: str,
     query: str,
-    embedding_provider: EmbeddingProvider,
+    embedding_provider: EmbeddingProvider | None,
     reader_provider: ReaderProvider | None,
     *,
     question_date: date | datetime | str,
