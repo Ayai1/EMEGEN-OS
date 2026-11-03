@@ -53,13 +53,41 @@ class FactInput:
     confidence: float | None = None
 
 
-def as_of_timestamp(value: float | int | date | datetime | str) -> float:
+@dataclass(frozen=True, slots=True)
+class TemporalBoundary:
+    """A normalized temporal endpoint and its explicit inclusivity.
+
+    For an ``as_of`` query, an inclusive boundary selects the state at the
+    instant. An exclusive boundary selects the left limit immediately before
+    the instant, without approximating it by subtracting a floating-point
+    epsilon. The same value type can describe endpoints of history ranges.
+    """
+
+    timestamp: float
+    inclusive: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.timestamp, bool) or not isinstance(self.timestamp, (int, float)):
+            raise TypeError("Temporal boundary timestamp must be finite")
+        timestamp = float(self.timestamp)
+        if not math.isfinite(timestamp):
+            raise ValueError("Temporal boundary timestamp must be finite")
+        if not isinstance(self.inclusive, bool):
+            raise TypeError("Temporal boundary inclusivity must be a boolean")
+        object.__setattr__(self, "timestamp", timestamp)
+
+
+def as_of_timestamp(value: float | int | date | datetime | str | TemporalBoundary) -> float:
     """Convert an as-of value to Unix seconds.
 
     A date or ``YYYY-MM-DD`` string means 00:00:00 UTC at the start of that
     date. Explicit timestamps must include a UTC offset; naive datetimes are
-    rejected so callers cannot accidentally depend on the host timezone.
+    rejected so callers cannot accidentally depend on the host timezone. A
+    ``TemporalBoundary`` returns its timestamp only; pass the boundary object
+    directly to temporal retrieval to preserve its inclusivity.
     """
+    if isinstance(value, TemporalBoundary):
+        return value.timestamp
     if isinstance(value, bool):
         raise TypeError("Boolean values are not timestamps")
     if isinstance(value, (int, float)):
@@ -110,7 +138,7 @@ def calculate_valid_from(
     return historical_base + turn_idx * 1e-3 + fact_seq * 1e-6
 
 
-def insert_fact(database: str, fact: FactInput, *, timeout: float = 5.0) -> str:
+def insert_fact(database: str, fact: FactInput, *, timeout: float = 5.0) -> str | None:
     """Insert or replay one slot fact atomically and return its canonical interval ID.
 
     The observation ledger preserves every source fact. ``facts`` stores the
@@ -184,7 +212,7 @@ def _finite_number(value: float, name: str) -> float:
     return result
 
 
-def _insert_fact(conn: sqlite3.Connection, fact: FactInput) -> str:
+def _insert_fact(conn: sqlite3.Connection, fact: FactInput) -> str | None:
     source = conn.execute(
         "SELECT history_id, event_time, session_id, turn_idx "
         "FROM turns WHERE turn_id = ?",
@@ -212,7 +240,7 @@ def _insert_fact(conn: sqlite3.Connection, fact: FactInput) -> str:
                 "SELECT canonical_fact_id FROM fact_observations WHERE observation_id = ?",
                 (fact.fact_id,),
             ).fetchone()
-        return existing["canonical_fact_id"] or fact.fact_id
+        return existing["canonical_fact_id"]
 
     same_source = conn.execute(
         "SELECT observation_id FROM fact_observations WHERE turn_id = ? AND fact_seq = ?",
@@ -237,7 +265,7 @@ def _insert_fact(conn: sqlite3.Connection, fact: FactInput) -> str:
         ).fetchone()
         if existing is not None:
             _assert_same_observation(existing, fact)
-            return existing["canonical_fact_id"] or fact.fact_id
+            return existing["canonical_fact_id"]
         raise TemporalInvariantError(f"fact_id {fact.fact_id!r} is already in use")
 
     source_is_quarantined = turn_has_quarantine_event(conn, fact.turn_id)
@@ -291,8 +319,10 @@ def _insert_fact(conn: sqlite3.Connection, fact: FactInput) -> str:
         "SELECT canonical_fact_id FROM fact_observations WHERE observation_id = ?",
         (fact.fact_id,),
     ).fetchone()
-    if row is None or row["canonical_fact_id"] is None:
+    if row is None:
         raise TemporalInvariantError("Inserted observation was not assigned to an interval")
+    # None is a deliberate non-projection: an untrusted conflicting observation
+    # remains in the append-only ledger but is not an active fact.
     return row["canonical_fact_id"]
 
 
@@ -427,6 +457,7 @@ def _eligible_observations(
         params.append(cardinality)
     return conn.execute(
         """SELECT o.*, t.event_time AS source_event_time,
+                  t.source_type AS source_type,
                   t.session_id AS source_session_id, t.turn_idx AS source_turn_idx
            FROM fact_observations AS o
            JOIN turns AS t ON t.turn_id = o.turn_id
@@ -440,21 +471,30 @@ def _eligible_observations(
 def _reconcile_slot(
     conn: sqlite3.Connection, history_id: str, entity: str, attribute: str, recorded_at: float
 ) -> None:
-    """Rebuild one single-valued slot's interval projection from all eligible observations."""
+    """Rebuild one single-valued slot's projection with provenance-aware updates.
+
+    ``user_turn`` has higher authority than ``tool`` and ``external_doc``,
+    independently of the numeric trust values. A conflicting lower-authority
+    observation remains in the append-only observation ledger but is excluded
+    from the slot projection until a user turn confirms or replaces it.
+    """
     observations = _eligible_observations(
         conn, history_id, entity, attribute, cardinality="single"
     )
+    observations, blocked_observation_ids = _resolve_source_authority(observations)
     for obs in observations:
         conn.execute(
             "UPDATE fact_observations SET effective_at = ? WHERE observation_id = ?",
             (obs["valid_at"], obs["observation_id"]),
         )
 
-    # Resolve exact timestamp collisions in stable source order. nextafter keeps
-    # each event ordered without inventing a fixed-size epsilon at epoch scale.
+    # Resolve exact timestamp collisions in stable accepted-source order.
+    # nextafter keeps projected events ordered without inventing a fixed-size
+    # epsilon at epoch scale.
     previous: float | None = None
     resolved: list[dict[str, object]] = []
     for obs in observations:
+        observation_id = str(obs["observation_id"])
         effective = float(obs["valid_at"])
         if previous is not None and effective <= previous:
             effective = math.nextafter(previous, math.inf)
@@ -466,7 +506,7 @@ def _reconcile_slot(
         resolved.append(item)
         conn.execute(
             "UPDATE fact_observations SET effective_at = ? WHERE observation_id = ?",
-            (effective, obs["observation_id"]),
+            (effective, observation_id),
         )
 
     # Consecutive normalized-equal observations are one logical interval.
@@ -605,8 +645,13 @@ def _reconcile_slot(
             "UPDATE fact_observations SET canonical_fact_id = ? WHERE observation_id = ?",
             (canonical_id, observation_id),
         )
+    for observation_id in blocked_observation_ids:
+        conn.execute(
+            "UPDATE fact_observations SET canonical_fact_id = NULL WHERE observation_id = ?",
+            (observation_id,),
+        )
 
-    eligible_observation_ids = set(mapping)
+    eligible_observation_ids = set(mapping) | blocked_observation_ids
     obsolete_ids = set(old_by_id) - desired_ids
     for old_id in sorted(obsolete_ids):
         old = old_by_id[old_id]
@@ -679,6 +724,42 @@ def _reconcile_slot(
                WHERE trigger_fact.key_type = 'trigger' AND trigger_fact.parent_fact_id = ?""",
             (row["valid_from"], row["valid_until"], row["expired_at"], row["fact_id"]),
         )
+
+
+def _resolve_source_authority(
+    observations: list[sqlite3.Row],
+) -> tuple[list[sqlite3.Row], set[str]]:
+    """Exclude lower-authority conflicting events after a user-established value.
+
+    Numeric ``trust`` is intentionally not used: current fixture and production
+    source classes can carry equal scores. ``user_turn`` is the authority class;
+    ``tool`` and ``external_doc`` can update their own untrusted slot chain but
+    cannot replace a user-established value. A later user observation of the
+    proposed value records the confirmation and promotes it to user authority.
+    """
+    accepted: list[sqlite3.Row] = []
+    blocked: set[str] = set()
+    current_value: str | None = None
+    current_authority: str | None = None
+    for observation in observations:
+        observation_id = str(observation["observation_id"])
+        source_type = str(observation["source_type"])
+        value_norm = str(observation["value_norm"])
+        if (
+            current_value is not None
+            and value_norm != current_value
+            and source_type in {"tool", "external_doc"}
+            and current_authority == "user_turn"
+        ):
+            blocked.add(observation_id)
+            continue
+        accepted.append(observation)
+        if current_value is None or value_norm != current_value:
+            current_value = value_norm
+            current_authority = source_type
+        elif source_type == "user_turn":
+            current_authority = "user_turn"
+    return accepted, blocked
 
 
 def rebuild_slot_projection(
@@ -812,7 +893,7 @@ def retrieve_facts(
     history_id: str,
     *,
     view: FactView = "current",
-    as_of: float | int | date | datetime | str | None = None,
+    as_of: float | int | date | datetime | str | TemporalBoundary | None = None,
     entity: str | None = None,
     attribute: str | None = None,
     timeout: float = 5.0,
@@ -820,8 +901,10 @@ def retrieve_facts(
     """Retrieve eligible slot facts for current, as-of, or history views.
 
     `current` returns each single-valued slot's latest eligible interval and
-    all eligible multi-valued observations. `as_of` uses half-open intervals.
-    `history` returns normalized intervals in deterministic event order.
+    all eligible multi-valued observations. `as_of` uses half-open intervals;
+    a `TemporalBoundary(inclusive=False)` selects the left limit before its
+    timestamp without floating-point epsilon arithmetic. `history` returns
+    normalized intervals in deterministic event order.
     """
     with connection(database, timeout=timeout) as conn:
         return _retrieve_facts(
@@ -835,7 +918,7 @@ def _retrieve_facts(
     history_id: str,
     *,
     view: FactView = "current",
-    as_of: float | int | date | datetime | str | None = None,
+    as_of: float | int | date | datetime | str | TemporalBoundary | None = None,
     entity: str | None = None,
     attribute: str | None = None,
 ) -> list[dict[str, object]]:
@@ -846,6 +929,7 @@ def _retrieve_facts(
         raise ValueError("as_of is required when view='as_of'")
     if view != "as_of" and as_of is not None:
         raise ValueError("as_of can only be supplied when view='as_of'")
+    boundary = as_of if isinstance(as_of, TemporalBoundary) else None
     timestamp = as_of_timestamp(as_of) if as_of is not None else None
     if not history_id:
         raise ValueError("history_id must be a non-empty string")
@@ -860,6 +944,7 @@ def _retrieve_facts(
         normalized_entity,
         normalized_attribute,
     )
+    observations, _ = _resolve_source_authority(observations)
     timelines = _ordered_timeline(observations)
     projected: list[dict[str, object]] = []
     for (slot_entity, slot_attribute, cardinality), timeline in timelines.items():
@@ -907,15 +992,28 @@ def _retrieve_facts(
             continue
         if view == "as_of":
             assert timestamp is not None
-            projected.extend(
-                row for row in intervals
-                if float(row["valid_from"]) <= timestamp
-                and (row["valid_until"] is None or float(row["valid_until"]) > timestamp)
-            )
-            projected.extend(
-                _project_multi(item)
-                for item in multi_rows if float(item["effective_at"]) <= timestamp
-            )
+            if boundary is None or boundary.inclusive:
+                projected.extend(
+                    row for row in intervals
+                    if float(row["valid_from"]) <= timestamp
+                    and (row["valid_until"] is None or float(row["valid_until"]) > timestamp)
+                )
+                projected.extend(
+                    _project_multi(item)
+                    for item in multi_rows if float(item["effective_at"]) <= timestamp
+                )
+            else:
+                # For a half-open fact interval [valid_from, valid_until), its
+                # left-limit at T is present when valid_from < T <= valid_until.
+                projected.extend(
+                    row for row in intervals
+                    if float(row["valid_from"]) < timestamp
+                    and (row["valid_until"] is None or float(row["valid_until"]) >= timestamp)
+                )
+                projected.extend(
+                    _project_multi(item)
+                    for item in multi_rows if float(item["effective_at"]) < timestamp
+                )
             continue
         projected.extend(intervals)
         projected.extend(_project_multi(item) for item in multi_rows)
@@ -963,7 +1061,7 @@ def get_current_facts(
 def get_facts_as_of(
     database: str,
     history_id: str,
-    as_of: float | int | date | datetime | str,
+    as_of: float | int | date | datetime | str | TemporalBoundary,
     *,
     entity: str | None = None,
     attribute: str | None = None,

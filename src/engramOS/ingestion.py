@@ -170,6 +170,8 @@ def ingest_turn(
     recorded_at: float | None = None,
     max_extraction_attempts: int = 2,
     timeout: float = 5.0,
+    strict_untrusted: bool = False,
+    slot_aliases: bool = False,
 ) -> IngestionResult:
     """Ingest one turn through the same staged batch pipeline as ``ingest_turns``."""
     return ingest_turns(
@@ -180,6 +182,8 @@ def ingest_turn(
         recorded_at=recorded_at,
         max_extraction_attempts=max_extraction_attempts,
         timeout=timeout,
+        strict_untrusted=strict_untrusted,
+        slot_aliases=slot_aliases,
     )[0]
 
 
@@ -193,6 +197,8 @@ def ingest_turns(
     quarantine_policy: Literal["raise", "isolate"] = "raise",
     max_extraction_attempts: int = 2,
     timeout: float = 5.0,
+    strict_untrusted: bool = False,
+    slot_aliases: bool = False,
 ) -> tuple[IngestionResult, ...]:
     """Ingest a deterministic batch, validating all extractions before writes.
 
@@ -203,6 +209,8 @@ def ingest_turns(
     """
     if quarantine_policy not in ("raise", "isolate"):
         raise ValueError("quarantine_policy must be 'raise' or 'isolate'")
+    if type(strict_untrusted) is not bool or type(slot_aliases) is not bool:
+        raise TypeError("strict_untrusted and slot_aliases must be bool values")
     ordered = _validate_turn_batch(turns, recorded_at=recorded_at)
     if not ordered:
         return ()
@@ -215,6 +223,8 @@ def ingest_turns(
         quarantine_policy=quarantine_policy,
         max_extraction_attempts=max_extraction_attempts,
         timeout=timeout,
+        strict_untrusted=strict_untrusted,
+        slot_aliases=slot_aliases,
     )
 
 
@@ -286,6 +296,8 @@ def _ingest_validated_batch(
     quarantine_policy: Literal["raise", "isolate"],
     max_extraction_attempts: int,
     timeout: float,
+    strict_untrusted: bool,
+    slot_aliases: bool,
 ) -> tuple[IngestionResult, ...]:
     # Stage source records independently. A crash leaves valid, resumable
     # pending_gate jobs and never exposes partially written turn metadata.
@@ -315,6 +327,7 @@ def _ingest_validated_batch(
                 evaluator=evaluator,
                 recorded_at=recorded_at,
                 timeout=timeout,
+                strict_untrusted=strict_untrusted,
             )
             quarantine_event_id = _gate_outcome_database(
                 database, turn.turn_id, timeout=timeout
@@ -383,7 +396,10 @@ def _ingest_validated_batch(
                     )
             extraction_work = surviving
         working_slots = set(
-            _existing_slots(database, turns[0].history_id, timeout=timeout)
+            _existing_slots(
+                database, turns[0].history_id, timeout=timeout,
+                **({"slot_aliases": True} if slot_aliases else {}),
+            )
         )
         for previous in extraction_work:
             if previous.candidates is not None:
@@ -499,6 +515,7 @@ def _ingest_validated_batch(
                 ((item.validated, item.candidates),),
                 recorded_at=recorded_at,
                 timeout=timeout,
+                **({"slot_aliases": True} if slot_aliases else {}),
             )
         except QuarantinedTurnError as exc:
             if quarantine_policy != "isolate" or exc.turn_id != item.validated.turn_id:
@@ -826,6 +843,7 @@ def _approve_or_quarantine(
     evaluator: SignalEvaluator | None,
     recorded_at: float | None,
     timeout: float,
+    strict_untrusted: bool,
 ) -> _GateStatus:
     with connection(database, timeout=timeout) as conn:
         events = conn.execute(
@@ -867,6 +885,7 @@ def _approve_or_quarantine(
         evaluator,
         created_at=recorded_at,
         timeout=timeout,
+        strict_untrusted=strict_untrusted,
     )
     _set_state(
         database,
@@ -901,7 +920,13 @@ def _gate_outcome_database(database: str, turn_id: str, *, timeout: float) -> in
         return _gate_outcome(conn, turn_id)
 
 
-def _existing_slots(database: str, history_id: str, *, timeout: float) -> tuple[tuple[str, str], ...]:
+def _existing_slots(
+    database: str,
+    history_id: str,
+    *,
+    timeout: float,
+    slot_aliases: bool = False,
+) -> tuple[tuple[str, str], ...]:
     with connection(database, timeout=timeout) as conn:
         rows = conn.execute(
             """SELECT DISTINCT f.entity, f.attribute
@@ -913,7 +938,10 @@ def _existing_slots(database: str, history_id: str, *, timeout: float) -> tuple[
             (history_id,),
         ).fetchall()
     return tuple(
-        normalize_slot_name(str(row["entity"]), str(row["attribute"])) for row in rows
+        normalize_slot_name(
+            str(row["entity"]), str(row["attribute"]), use_aliases=slot_aliases
+        )
+        for row in rows
     )
 
 
@@ -996,6 +1024,7 @@ def _apply_batch_facts(
     *,
     recorded_at: float | None,
     timeout: float,
+    slot_aliases: bool = False,
 ) -> None:
     if not fact_batches:
         return
@@ -1003,7 +1032,14 @@ def _apply_batch_facts(
     if len(history_ids) != 1:
         raise IngestionRecoveryError("temporal write batch crosses history boundaries")
     history_id = next(iter(history_ids))
-    registry = set(_existing_slots(database, history_id, timeout=timeout))
+    registry = set(
+        _existing_slots(
+            database,
+            history_id,
+            timeout=timeout,
+            **({"slot_aliases": True} if slot_aliases else {}),
+        )
+    )
     for turn, candidates in fact_batches:
         if candidates is None:
             raise IngestionRecoveryError("cannot apply an unstaged extraction")
@@ -1033,7 +1069,9 @@ def _apply_batch_facts(
                     quarantine_event_id,
                 )
 
-            normalized_slot = normalize_slot_name(candidate.entity, candidate.attribute)
+            normalized_slot = normalize_slot_name(
+                candidate.entity, candidate.attribute, use_aliases=slot_aliases
+            )
             # Current canonicalization is the specification's exact-name match.
             # No fuzzy merge is attempted before the calibrated local matcher exists.
             canonical_entity, canonical_attribute = next(

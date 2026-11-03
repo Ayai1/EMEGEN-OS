@@ -9,19 +9,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
+import json
 import logging
 import math
+import re
 import sqlite3
 import time
 from typing import Callable, Protocol
 
 from .db import connection, transaction
+from .eligibility import fact_eligibility_predicate
+from .normalize import normalize_slot_name, normalize_value
 from .provenance import ProvenanceError, validate_role_source_type
 from .temporal import rebuild_slot_projection
 
 logger = logging.getLogger(__name__)
 
 _UNTRUSTED_SOURCE_TYPES = frozenset({"tool", "external_doc"})
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_CONTRADICTION_RE = re.compile(
+    r"\b(?:ignore|override|overrule|disregard|replace|instead|rather than|"
+    r"no longer|not|don't|do not|never|switch(?:ed)? from|change(?:d)? from|"
+    r"remove|waive)\b",
+    re.IGNORECASE,
+)
+_BRIDGE_STOPWORDS = frozenset({"a", "an", "and", "as", "for", "i", "in", "is", "it", "me", "my", "of", "on", "or", "the", "to", "user", "we"})
+DEFAULT_BRIDGE_TAU = 0.60
 
 
 class SignalStatus(str, Enum):
@@ -83,6 +97,7 @@ class GateEvaluation:
 class GateDecision:
     decision: str
     signals_fired: int
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +109,7 @@ class GateEvent:
     base_trust_before: float
     base_trust_after: float
     created_at: float
+    reason: str
 
 
 class IncompleteSignalEvaluation(ValueError):
@@ -141,6 +157,117 @@ class SignalEvaluator(Protocol):
         """Evaluate contradiction against pinned system/user policy facts."""
 
 
+class DefaultSignalEvaluator:
+    """Deterministic authored-suite gate signals; no provider or network calls.
+
+    Policy checks can only use eligible constraint facts that existed before
+    this turn was extracted. Bridge similarity uses eligible earlier slot facts
+    and a fixed Dice-overlap threshold chosen for the authored benchmark.
+    """
+
+    bridge_tau = DEFAULT_BRIDGE_TAU
+
+    def fingerprint_inputs(self, conn: sqlite3.Connection, turn: sqlite3.Row) -> str:
+        constraints, bridge_slots = self._inputs(conn, turn)
+        payload = {
+            "history_id": str(turn["history_id"]),
+            "event_time": float(turn["event_time"]),
+            "constraints": [tuple(row) for row in constraints],
+            "bridge_slots": [tuple(row) for row in bridge_slots],
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def evaluate_bridge(self, conn: sqlite3.Connection, turn: sqlite3.Row) -> SignalResult:
+        _, bridge_slots = self._inputs(conn, turn)
+        turn_tokens = _bridge_tokens(str(turn["raw_content"]))
+        if len(turn_tokens) < 2 or not bridge_slots:
+            return SignalResult(SignalStatus.CLEAR)
+        prefixes = (turn_tokens[:size] for size in range(len(turn_tokens), 1, -1))
+        max_score = 0.0
+        for prefix in prefixes:
+            prefix_ngrams = _token_ngrams(prefix)
+            for row in bridge_slots:
+                key_tokens = _bridge_tokens(" ".join(str(value or "") for value in row[1:]))
+                if not key_tokens:
+                    continue
+                score = _dice_overlap(prefix_ngrams, _token_ngrams(key_tokens))
+                max_score = max(max_score, score)
+                if score >= self.bridge_tau:
+                    return SignalResult(
+                        SignalStatus.FIRED,
+                        f"prefix_slot_overlap={score:.3f};tau={self.bridge_tau:.2f}",
+                    )
+        return SignalResult(
+            SignalStatus.CLEAR,
+            f"max_prefix_slot_overlap={max_score:.3f};tau={self.bridge_tau:.2f}",
+        )
+
+    def evaluate_policy(self, conn: sqlite3.Connection, turn: sqlite3.Row) -> SignalResult:
+        constraints, _ = self._inputs(conn, turn)
+        text = normalize_value(str(turn["raw_content"])).lower()
+        text_tokens = set(_tokens(text))
+        for row in constraints:
+            _, entity, attribute, value, key_text = row
+            slot_text = " ".join(
+                (str(entity or ""), str(attribute or ""), str(key_text or ""), str(value or ""))
+            )
+            slot_terms = set(_tokens(slot_text))
+            slot_terms -= _BRIDGE_STOPWORDS
+            if not slot_terms.intersection(text_tokens):
+                continue
+            if _CONTRADICTION_RE.search(text):
+                return SignalResult(
+                    SignalStatus.FIRED,
+                    f"explicit_override_or_negation={normalize_slot_name(str(entity or ''), str(attribute or ''))}",
+                )
+        return SignalResult(SignalStatus.CLEAR)
+
+    @staticmethod
+    def _inputs(
+        conn: sqlite3.Connection, turn: sqlite3.Row
+    ) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
+        history_id = str(turn["history_id"])
+        event_time = float(turn["event_time"])
+        eligible = fact_eligibility_predicate("f")
+        constraints = conn.execute(
+            """SELECT f.fact_id, f.entity, f.attribute, f.value, f.key_text
+               FROM facts AS f
+               WHERE f.history_id = ? AND f.key_type = 'slot' AND f.kind = 'constraint'
+                 AND f.valid_from <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)
+                 AND """ + eligible + " ORDER BY f.fact_id",
+            (history_id, event_time, event_time),
+        ).fetchall()
+        bridge_slots = conn.execute(
+            """SELECT f.fact_id, f.entity, f.attribute, f.key_text
+               FROM facts AS f
+               WHERE f.history_id = ? AND f.key_type = 'slot' AND f.valid_from <= ?
+                 AND """ + eligible + " ORDER BY f.fact_id",
+            (history_id, event_time),
+        ).fetchall()
+        return constraints, bridge_slots
+
+
+def _tokens(text: str) -> tuple[str, ...]:
+    return tuple(_TOKEN_RE.findall(normalize_value(text).lower()))
+
+
+def _bridge_tokens(text: str) -> tuple[str, ...]:
+    return tuple(token for token in _tokens(text) if token not in _BRIDGE_STOPWORDS)
+
+
+def _token_ngrams(tokens: tuple[str, ...]) -> set[tuple[str, ...]]:
+    grams: set[tuple[str, ...]] = {(token,) for token in tokens}
+    grams.update(zip(tokens, tokens[1:]))
+    return grams
+
+
+def _dice_overlap(left: set[tuple[str, ...]], right: set[tuple[str, ...]]) -> float:
+    if not left or not right:
+        return 0.0
+    return (2.0 * len(left & right)) / (len(left) + len(right))
+
+
 def evaluate_source_signal(source_type: str) -> SignalResult:
     """Fire for the specified untrusted provenance types only."""
     if not isinstance(source_type, str):
@@ -158,6 +285,7 @@ def evaluate_turn(
     evaluator: SignalEvaluator,
     *,
     timeout: float = 5.0,
+    strict_untrusted: bool = False,
 ) -> GateEvaluation:
     """Evaluate signals without persisting events or changing trust.
 
@@ -201,7 +329,11 @@ def evaluate_turn(
         )
         # Fail at the evaluator boundary so callers cannot mistake an
         # incomplete result for a store decision and continue ingestion.
-        decide_gate(evaluated.signals)
+        decide_gate(
+            evaluated.signals,
+            strict_untrusted=strict_untrusted,
+            source_type=evaluated.source_type,
+        )
         return evaluated
 
 
@@ -220,10 +352,17 @@ def _evaluate_injected(
         return SignalResult(SignalStatus.FAILED, type(exc).__name__)
 
 
-def decide_gate(signals: GateSignals) -> GateDecision:
-    """Apply the specified 2-of-3 policy to three completed signal results."""
+def decide_gate(
+    signals: GateSignals,
+    *,
+    strict_untrusted: bool = False,
+    source_type: str | None = None,
+) -> GateDecision:
+    """Apply default 2-of-3, or the opt-in one-signal untrusted-source rule."""
     if not isinstance(signals, GateSignals):
         raise TypeError("signals must be GateSignals")
+    if type(strict_untrusted) is not bool:
+        raise TypeError("strict_untrusted must be a bool")
     invalid: list[str] = []
     for name, result in signals.named():
         if not isinstance(result, SignalResult):
@@ -233,10 +372,21 @@ def decide_gate(signals: GateSignals) -> GateDecision:
     if invalid:
         raise IncompleteSignalEvaluation(tuple(invalid))
 
-    fired = sum(result.status == SignalStatus.FIRED for _, result in signals.named())
+    fired_names = tuple(
+        name.removeprefix("signal_")
+        for name, result in signals.named()
+        if result.status == SignalStatus.FIRED
+    )
+    fired = len(fired_names)
+    strict_source = strict_untrusted and source_type in {"tool", "external_doc"}
+    quarantine = fired >= 2 or (strict_source and fired >= 1)
+    reason = "+".join(fired_names) + " fired" if fired_names else "no signals fired"
+    if strict_source and 0 < fired < 2:
+        reason += "; strict_untrusted rule"
     return GateDecision(
-        decision="quarantine" if fired >= 2 else "store",
+        decision="quarantine" if quarantine else "store",
         signals_fired=fired,
+        reason=reason,
     )
 
 
@@ -261,6 +411,7 @@ def evaluate_and_record_turn(
     *,
     created_at: float | None = None,
     timeout: float = 5.0,
+    strict_untrusted: bool = False,
 ) -> GateEvent:
     """Evaluate a turn's signals and atomically record/apply the gate decision.
 
@@ -269,13 +420,17 @@ def evaluate_and_record_turn(
     outside the SQLite write transaction; persistence revalidates source-turn
     identity/provenance and the evaluator's mutable-input fingerprint.
     """
-    evaluation = evaluate_turn(database, turn_id, evaluator, timeout=timeout)
+    evaluation = evaluate_turn(
+        database, turn_id, evaluator, timeout=timeout,
+        strict_untrusted=strict_untrusted,
+    )
     return _record_gate_decision(
         database,
         evaluation,
         evaluator,
         created_at=created_at,
         timeout=timeout,
+        strict_untrusted=strict_untrusted,
     )
 
 
@@ -286,13 +441,18 @@ def _record_gate_decision(
     *,
     created_at: float | None = None,
     timeout: float = 5.0,
+    strict_untrusted: bool = False,
 ) -> GateEvent:
     """Internal atomic persistence for a completed gate evaluation.
 
     Application code should use ``evaluate_and_record_turn``. Quarantine is
     sticky: a subsequent store event never clears flags or raises trust again.
     """
-    decision = decide_gate(evaluation.signals)
+    decision = decide_gate(
+        evaluation.signals,
+        strict_untrusted=strict_untrusted,
+        source_type=evaluation.source_type,
+    )
     timestamp = _finite_timestamp(time.time() if created_at is None else created_at)
 
     with transaction(database, timeout=timeout) as conn:
@@ -394,6 +554,7 @@ def _record_gate_decision(
             base_trust_before=trust_before,
             base_trust_after=trust_after,
             created_at=timestamp,
+            reason=decision.reason,
         )
 
     logger.info(

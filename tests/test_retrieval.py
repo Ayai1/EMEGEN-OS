@@ -683,8 +683,13 @@ class RetrievalTests(unittest.TestCase):
         continue_reader = threading.Event()
         original_search = retrieval_module._search_turns_fts
 
-        def pause_after_first_snapshot_query(conn, history_id, query, *, limit):
-            candidates = original_search(conn, history_id, query, limit=limit)
+        def pause_after_first_snapshot_query(
+            conn, history_id, query, *, limit, event_time_range=None
+        ):
+            candidates = original_search(
+                conn, history_id, query, limit=limit,
+                event_time_range=event_time_range,
+            )
             reached_snapshot_read.set()
             if not continue_reader.wait(timeout=5):
                 raise TimeoutError("test writer did not release snapshot reader")

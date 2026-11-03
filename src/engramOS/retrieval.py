@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 from pathlib import Path
 import sqlite3
+import time
 from typing import Literal, Mapping, Sequence
 
 import numpy as np
@@ -18,7 +19,8 @@ from .embeddings import (
     normalize_vector,
     validate_embedding_provider,
 )
-from .temporal import FactView, _retrieve_facts
+from .temporal import FactView, TemporalBoundary, _retrieve_facts, as_of_timestamp
+from .query_classifier import TemporalRange
 from .vector_index import DenseIndexUnavailable, DenseMatch, InMemoryVectorIndex
 
 _WORD = re.compile(r"[\w]+", re.UNICODE)
@@ -132,6 +134,14 @@ class RetrievalResult:
     diagnostics: RetrievalDiagnostics
 
 
+@dataclass(frozen=True, slots=True)
+class RehydratedCandidates:
+    """Fresh candidate text and the start time of its authorizing DB snapshot."""
+
+    candidates: tuple[RetrievedTurn | RetrievedFact, ...]
+    authorization_timestamp: float
+
+
 def safe_fts_query(query: str) -> str:
     """Tokenize and quote query words so raw FTS operators are never executed."""
     if not isinstance(query, str):
@@ -161,18 +171,20 @@ def _search_turns_fts(
     *,
     limit: int,
     gated: bool = True,
+    event_time_range: TemporalRange | None = None,
 ) -> list[FtsCandidate]:
     match_query = safe_fts_query(query)
     if not match_query:
         return []
+    range_sql, range_params = _event_time_range_sql("t.event_time", event_time_range)
     rows = conn.execute(
         """SELECT t.*, bm25(turns_fts) AS lexical_score
            FROM turns_fts
            JOIN turns AS t ON t.rowid = turns_fts.rowid
            WHERE turns_fts MATCH ? AND t.history_id = ? AND """
-        + turn_eligibility_predicate("t", gated=gated)
+        + turn_eligibility_predicate("t", gated=gated) + range_sql
         + " ORDER BY lexical_score ASC, t.turn_id ASC LIMIT ?",
-        (match_query, history_id, limit),
+        (match_query, history_id, *range_params, limit),
     ).fetchall()
     return [
         FtsCandidate("turn", str(row["turn_id"]), rank, float(row["lexical_score"]),
@@ -387,12 +399,14 @@ def hybrid_rag(
     rrf_k: int = 60,
     timeout: float = 5.0,
     gated: bool = True,
+    event_time_range: TemporalRange | None = None,
 ) -> RetrievalResult:
-    """Return the specified dense+BM25 RRF top-k verbatim turns."""
+    """Return dense+BM25 RRF turns, optionally prefiltered by event time."""
     return _retrieve_turns(
         database, history_id, query, embedding_provider,
         top_k=top_k, candidate_limit=candidate_limit, rrf_k=rrf_k,
         timeout=timeout, baseline="hybrid_rag", gated=gated,
+        event_time_range=event_time_range,
     )
 
 
@@ -445,6 +459,7 @@ def retrieve_memory(
     *,
     view: FactView = "current",
     as_of: object | None = None,
+    history_range: TemporalRange | None = None,
     top_k: int = 10,
     fact_top_k: int = 10,
     turn_candidate_limit: int = 50,
@@ -461,6 +476,15 @@ def retrieve_memory(
     _validate_scope(history_id, turn_candidate_limit)
     _validate_scope(history_id, fact_candidate_limit)
     _validate_view(view, as_of)
+    _validate_history_range(view, history_range)
+    turn_event_range = (
+        TemporalRange(end=(
+            as_of if isinstance(as_of, TemporalBoundary)
+            else TemporalBoundary(as_of_timestamp(as_of))
+        ))
+        if view == "as_of"
+        else history_range
+    )
     query_vector = _encode_query(embedding_provider, query)
     with connection(database, timeout=timeout) as conn:
         conn.execute("BEGIN")
@@ -468,19 +492,25 @@ def retrieve_memory(
             conn, history_id, embedding_provider.model_id, ("turn", "fact")
         )
         turn_fts = _search_turns_fts(
-            conn, history_id, query, limit=turn_candidate_limit
+            conn, history_id, query, limit=turn_candidate_limit,
+            event_time_range=turn_event_range,
         )
         turn_index = InMemoryVectorIndex.load_from_connection(
             conn, history_id, "turn", embedding_provider.model_id,
             dimension=embedding_provider.dimension, validate_freshness=False,
         )
-        if turn_index.size == 0:
+        if turn_index.size == 0 and turn_event_range is None:
             raise DenseIndexUnavailable(
                 f"Hybrid retrieval requires turn embeddings for history {history_id!r} "
                 f"and model {embedding_provider.model_id!r}; run index_history first"
             )
-        turn_dense = turn_index.search(query_vector, limit=turn_candidate_limit)
-        if not turn_dense:
+        allowed_turn_ids = _turn_ids_for_event_range(
+            conn, history_id, turn_event_range
+        )
+        turn_dense = turn_index.search(
+            query_vector, limit=turn_candidate_limit, allowed_ids=allowed_turn_ids
+        )
+        if not turn_dense and turn_event_range is None:
             raise DenseIndexUnavailable("Hybrid retrieval found no eligible dense turn candidates")
         turns = _fuse_turns(turn_fts, turn_dense, top_k=top_k, rrf_k=rrf_k)
 
@@ -516,10 +546,11 @@ def retrieve_memory(
         if view == "history":
             # History is a timeline, not a top-k semantic ranking. The lexical
             # and dense fact channels still report query candidates in diagnostics.
-            fused_facts = list(_retrieve_temporal_facts(
+            timeline = list(_retrieve_temporal_facts(
                 conn, history_id, view="history", as_of=None,
                 entity=entity, attribute=attribute
             ))
+            fused_facts = _select_history_range(timeline, history_range)
         else:
             fused_facts = _expand_fact_evidence(
                 conn, history_id, fact_fused, eligible_facts, fact_fts, fact_dense,
@@ -528,6 +559,8 @@ def retrieve_memory(
             conn, history_id, turns, fused_facts,
             view=view, as_of=as_of, entity=entity, attribute=attribute,
         )
+        if turn_event_range is not None:
+            turns = [turn for turn in turns if _in_range(turn.event_time, turn_event_range)]
         counts = {
             "turn_lexical": len(turn_fts),
             "turn_dense": len(turn_dense),
@@ -600,6 +633,118 @@ def _retrieve_temporal_facts(
     ))
 
 
+def rehydrate_reader_candidates(
+    database: str | Path,
+    history_id: str,
+    result: RetrievalResult,
+    ordered_ids: Sequence[tuple[str, str]],
+    *,
+    as_of: object | None = None,
+    history_range: TemporalRange | None = None,
+    timeout: float = 5.0,
+) -> RehydratedCandidates:
+    """Revalidate only the original IDs and rebuild their text/provenance in a fresh snapshot."""
+    if result.history_id != history_id:
+        raise ValueError("retrieval result is outside the requested history")
+    _validate_view(result.view, as_of)
+    _validate_history_range(result.view, history_range)
+    turn_range = (
+        TemporalRange(end=(
+            as_of if isinstance(as_of, TemporalBoundary)
+            else TemporalBoundary(as_of_timestamp(as_of))
+        ))
+        if result.view == "as_of" else history_range
+    )
+    original_turns = {item.turn_id: item for item in result.turns}
+    original_facts = {item.fact_id: item for item in result.facts}
+    if len(original_turns) != len(result.turns) or len(original_facts) != len(result.facts):
+        raise ValueError("retrieval result contains duplicate candidate IDs")
+    requested_turns = [value for kind, value in ordered_ids if kind == "turn"]
+    requested_facts = [value for kind, value in ordered_ids if kind == "fact"]
+    if (len(set(ordered_ids)) != len(ordered_ids)
+            or any(value not in original_turns for value in requested_turns)
+            or any(value not in original_facts for value in requested_facts)
+            or any(kind not in ("turn", "fact") for kind, _ in ordered_ids)):
+        raise ValueError("reader candidate IDs must be a unique subset of the retrieval result")
+
+    with connection(database, timeout=timeout) as conn:
+        conn.execute("BEGIN")
+        conn.execute(
+            "SELECT 1 FROM turns WHERE history_id = ? LIMIT 1", (history_id,)
+        ).fetchone()
+        authorization_timestamp = time.time()
+        eligible_turn_ids = _eligible_turn_ids(conn, history_id, requested_turns)
+        if result.view == "current" and eligible_turn_ids:
+            eligible_turn_ids -= _non_authoritative_conflict_turn_ids(
+                conn, history_id, eligible_turn_ids
+            )
+        if turn_range is not None:
+            eligible_turn_ids &= _turn_ids_for_event_range(conn, history_id, turn_range)
+        rows_by_id: dict[str, sqlite3.Row] = {}
+        if eligible_turn_ids:
+            ids = tuple(eligible_turn_ids)
+            marks = ",".join("?" for _ in ids)
+            rows_by_id = {
+                str(row["turn_id"]): row
+                for row in conn.execute(
+                    "SELECT t.* FROM turns AS t WHERE t.history_id = ? AND t.turn_id IN ("
+                    + marks + ") AND " + turn_eligibility_predicate("t"),
+                    (history_id, *ids),
+                ).fetchall()
+            }
+        turns_by_id: dict[str, RetrievedTurn] = {}
+        for turn_id in requested_turns:
+            old = original_turns[turn_id]
+            row = rows_by_id.get(turn_id)
+            if row is not None:
+                turns_by_id[turn_id] = RetrievedTurn(
+                    turn_id, history_id, str(row["session_id"]), int(row["turn_idx"]),
+                    str(row["role"]), str(row["raw_content"]), str(row["source_type"]),
+                    float(row["event_time"]), float(row["recorded_at"]),
+                    old.dense_score, old.bm25_score, old.rrf_score, old.channels,
+                )
+
+        selected_facts = _fact_rows_for_view(
+            conn, history_id, view=result.view, as_of=as_of,
+            entity=None, attribute=None,
+        )
+        if result.view == "history":
+            selected_facts = {
+                key: value for key, value in selected_facts.items()
+                if _history_fact_selected(value, history_range)
+            }
+        fact_ranks = []
+        for fact_id in requested_facts:
+            if fact_id not in selected_facts:
+                continue
+            old = original_facts[fact_id]
+            fact_ranks.append(FusedRank(fact_id, old.rrf_score, old.channels, {}))
+        rebuilt_facts = _expand_fact_evidence(
+            conn, history_id, fact_ranks, selected_facts, (), ()
+        )
+        rebuilt_by_id = {item.fact_id: item for item in rebuilt_facts}
+        facts_by_id: dict[str, RetrievedFact] = {}
+        for fact_id in requested_facts:
+            fresh = rebuilt_by_id.get(fact_id)
+            if fresh is None:
+                continue
+            old = original_facts[fact_id]
+            facts_by_id[fact_id] = RetrievedFact(
+                fresh.fact, fresh.parent_fact, fresh.supporting_turns,
+                fresh.source_turn, fresh.confirmation_turn,
+                ("[baseline before requested history range]"
+                 if old.annotation == "[baseline before requested history range]"
+                 else fresh.annotation),
+                old.dense_score, old.bm25_score, old.rrf_score, old.channels,
+            )
+        candidates = tuple(
+            turns_by_id[value] if kind == "turn" else facts_by_id[value]
+            for kind, value in ordered_ids
+            if (value in turns_by_id if kind == "turn" else value in facts_by_id)
+        )
+        return RehydratedCandidates(candidates, authorization_timestamp)
+
+
 def _retrieve_turns(
     database: str | Path,
     history_id: str,
@@ -612,6 +757,7 @@ def _retrieve_turns(
     timeout: float,
     baseline: Literal["hybrid_rag", "recency"],
     gated: bool = True,
+    event_time_range: TemporalRange | None = None,
 ) -> RetrievalResult:
     validate_embedding_provider(provider)
     _validate_scope(history_id, top_k)
@@ -623,7 +769,8 @@ def _retrieve_turns(
             conn, history_id, provider.model_id, ("turn",), gated=gated
         )
         lexical = _search_turns_fts(
-            conn, history_id, query, limit=candidate_limit, gated=gated
+            conn, history_id, query, limit=candidate_limit, gated=gated,
+            event_time_range=event_time_range,
         )
         index = InMemoryVectorIndex.load_from_connection(
             conn, history_id, "turn", provider.model_id,
@@ -634,7 +781,12 @@ def _retrieve_turns(
                 f"{baseline} requires dense turn embeddings for history {history_id!r} "
                 f"and model {provider.model_id!r}; run index_history first"
             )
-        dense = index.search(query_vector, limit=candidate_limit)
+        allowed_ids = _turn_ids_for_event_range(
+            conn, history_id, event_time_range, gated=gated
+        )
+        dense = index.search(
+            query_vector, limit=candidate_limit, allowed_ids=allowed_ids
+        )
         if not dense:
             raise DenseRetrievalUnavailable(f"{baseline} has no eligible dense turn candidates")
         turns = _fuse_turns(lexical, dense, top_k=top_k, rrf_k=rrf_k)
@@ -845,6 +997,54 @@ def _eligible_turn_ids(
     return {str(row["turn_id"]) for row in rows}
 
 
+def _non_authoritative_conflict_turn_ids(
+    conn: sqlite3.Connection, history_id: str, turn_ids: set[str]
+) -> set[str]:
+    """Exclude conflicting external/tool turns from current Reader evidence.
+
+    The turn and observation remain stored for audit/replay. This suppresses
+    only a current-view Reader snapshot where a stored lower-authority claim
+    conflicts with an active value that has a user-turn source or confirmation.
+    """
+    if not turn_ids:
+        return set()
+    marks = ",".join("?" for _ in turn_ids)
+    candidate_eligible = turn_eligibility_predicate("candidate_turn")
+    active_eligible = fact_eligibility_predicate("active_fact")
+    confirmed_by_user = turn_eligibility_predicate("user_turn")
+    query = f"""SELECT DISTINCT observation.turn_id
+        FROM fact_observations AS observation
+        JOIN turns AS candidate_turn ON candidate_turn.turn_id = observation.turn_id
+        JOIN facts AS active_fact
+          ON active_fact.history_id = observation.history_id
+         AND active_fact.entity = observation.entity
+         AND active_fact.attribute = observation.attribute
+        WHERE observation.history_id = ?
+          AND observation.turn_id IN ({marks})
+          AND observation.cardinality = 'single'
+          AND observation.quarantined = 0
+          AND observation.canonical_fact_id IS NULL
+          AND observation.value_norm <> active_fact.value_norm
+          AND candidate_turn.source_type IN ('tool', 'external_doc')
+          AND {candidate_eligible}
+          AND {active_eligible}
+          AND active_fact.key_type = 'slot'
+          AND active_fact.cardinality = 'single'
+          AND active_fact.valid_until IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM fact_observations AS confirmation
+            JOIN turns AS user_turn ON user_turn.turn_id = confirmation.turn_id
+            WHERE confirmation.canonical_fact_id = active_fact.fact_id
+              AND confirmation.value_norm = active_fact.value_norm
+              AND confirmation.quarantined = 0
+              AND user_turn.source_type = 'user_turn'
+              AND {confirmed_by_user}
+          )"""
+    rows = conn.execute(query, (history_id, *turn_ids)).fetchall()
+    return {str(row["turn_id"]) for row in rows}
+
+
 def _eligible_fact_ids(
     conn: sqlite3.Connection,
     history_id: str,
@@ -1007,3 +1207,153 @@ def _validate_view(view: FactView, as_of: object | None) -> None:
         raise ValueError("as_of is required when view='as_of'")
     if view != "as_of" and as_of is not None:
         raise ValueError("as_of can only be supplied when view='as_of'")
+
+
+def _validate_history_range(view: FactView, history_range: TemporalRange | None) -> None:
+    if history_range is not None and not isinstance(history_range, TemporalRange):
+        raise TypeError("history_range must be a TemporalRange or None")
+    if history_range is not None and view != "history":
+        raise ValueError("history_range can only be supplied when view='history'")
+
+
+def _event_time_range_sql(
+    column: str, event_range: TemporalRange | None
+) -> tuple[str, tuple[float, ...]]:
+    if event_range is None:
+        return "", ()
+    clauses: list[str] = []
+    values: list[float] = []
+    if event_range.start is not None:
+        clauses.append(f"{column} {'>=' if event_range.start.inclusive else '>'} ?")
+        values.append(event_range.start.timestamp)
+    if event_range.end is not None:
+        clauses.append(f"{column} {'<=' if event_range.end.inclusive else '<'} ?")
+        values.append(event_range.end.timestamp)
+    return (" AND " + " AND ".join(clauses) if clauses else ""), tuple(values)
+
+
+def _turn_ids_for_event_range(
+    conn: sqlite3.Connection,
+    history_id: str,
+    event_range: TemporalRange | None,
+    *,
+    gated: bool = True,
+) -> set[str] | None:
+    if event_range is None:
+        return None
+    range_sql, params = _event_time_range_sql("t.event_time", event_range)
+    rows = conn.execute(
+        "SELECT t.turn_id FROM turns AS t WHERE t.history_id = ? AND "
+        + turn_eligibility_predicate("t", gated=gated) + range_sql,
+        (history_id, *params),
+    ).fetchall()
+    return {str(row["turn_id"]) for row in rows}
+
+
+def _in_range(value: float, event_range: TemporalRange) -> bool:
+    if event_range.start is not None:
+        if value < event_range.start.timestamp or (
+            value == event_range.start.timestamp and not event_range.start.inclusive
+        ):
+            return False
+    if event_range.end is not None:
+        if value > event_range.end.timestamp or (
+            value == event_range.end.timestamp and not event_range.end.inclusive
+        ):
+            return False
+    return True
+
+
+def _history_fact_selected(
+    fact: Mapping[str, object], history_range: TemporalRange | None
+) -> bool:
+    valid_from = float(fact.get("valid_from", 0.0))
+    if history_range is None:
+        return True
+    if history_range.start is not None and (
+        valid_from > history_range.start.timestamp
+        or (valid_from == history_range.start.timestamp and history_range.start.inclusive)
+    ) and (
+        history_range.end is None
+        or valid_from < history_range.end.timestamp
+        or (valid_from == history_range.end.timestamp and history_range.end.inclusive)
+    ):
+        return True
+    if history_range.start is not None and _is_history_baseline(fact, history_range.start):
+        valid_until = fact.get("valid_until")
+        if valid_until is None or (
+            float(valid_until) >= history_range.start.timestamp
+            if history_range.start.inclusive
+            else float(valid_until) > history_range.start.timestamp
+        ):
+            return True
+    if history_range.start is None:
+        return _in_range(valid_from, history_range)
+    if valid_from < history_range.start.timestamp:
+        return False
+    return _in_range(valid_from, history_range)
+
+
+def _select_history_range(
+    timeline: Sequence[RetrievedFact], history_range: TemporalRange | None
+) -> list[RetrievedFact]:
+    if history_range is None:
+        return list(timeline)
+    selected = [
+        item for item in timeline
+        if _in_range(float(item.fact.get("valid_from", 0.0)), history_range)
+    ]
+    if history_range.start is None:
+        return selected
+    baselines = [
+        item for item in timeline
+        if _is_history_baseline(item.fact, history_range.start)
+        and (item.fact.get("valid_until") is None or (
+            float(item.fact["valid_until"]) >= history_range.start.timestamp
+            if history_range.start.inclusive
+            else float(item.fact["valid_until"]) > history_range.start.timestamp
+        ))
+    ]
+    selected_ids = {item.fact_id for item in selected}
+    baseline_by_slot: dict[tuple[str, str, str], RetrievedFact] = {}
+    for item in sorted(
+        baselines,
+        key=lambda candidate: (
+            str(candidate.fact.get("entity") or ""),
+            str(candidate.fact.get("attribute") or ""),
+            -float(candidate.fact.get("valid_from", 0.0)),
+        ),
+    ):
+        slot = (
+            str(item.fact.get("entity") or ""),
+            str(item.fact.get("attribute") or ""),
+            str(item.fact.get("value") or "")
+            if item.fact.get("cardinality") == "multi" else "",
+        )
+        baseline_by_slot.setdefault(slot, item)
+    output = list(selected)
+    for item in baseline_by_slot.values():
+        if item.fact_id not in selected_ids:
+            output.append(RetrievedFact(
+                item.fact, item.parent_fact, item.supporting_turns, item.source_turn,
+                item.confirmation_turn, "[baseline before requested history range]",
+                item.dense_score, item.bm25_score, item.rrf_score, item.channels,
+            ))
+    return sorted(
+        output,
+        key=lambda item: (
+            float(item.fact.get("valid_from", 0.0)),
+            str(item.fact.get("entity") or ""),
+            str(item.fact.get("attribute") or ""), item.fact_id,
+        ),
+    )
+
+
+def _is_history_baseline(
+    fact: Mapping[str, object], start: TemporalBoundary
+) -> bool:
+    valid_from = float(fact.get("valid_from", 0.0))
+    # The baseline is a state already in effect before the range starts.
+    # A change exactly on an exclusive start is outside the requested range,
+    # but it is not a pre-range change and must not be smuggled in as baseline.
+    return valid_from < start.timestamp

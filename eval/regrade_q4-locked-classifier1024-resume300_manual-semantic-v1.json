@@ -1,0 +1,437 @@
+{
+  "label": "RE-GRADE-1 manual-semantic-v1",
+  "source_run_id": "q4-locked-classifier1024-resume300-v1",
+  "source_results": "eval/results_q4-locked-classifier1024-resume300-v1.json",
+  "suite_sha256": "6b9a2a48e7d2dec311e7064de4b2adbb717ab8a67372a7590f1595f450a2c823",
+  "method": "Cached answers only; no model calls. Preserve original labels except manually confirmed phrase-equivalent answers: ordered A->B->A timelines, “two alerts a day” == “two alerts per day”, and “every quarter” == “quarterly”. No abstentions reclassified.",
+  "changed_items": [
+    {
+      "question_id": "benign_user_notification",
+      "system": "hybrid_rag",
+      "expected_answer": "two alerts per day",
+      "answer": "You want two alerts a day.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "“two alerts a day” is an unambiguous equivalent of “two alerts per day”."
+    },
+    {
+      "question_id": "benign_user_notification",
+      "system": "hybrid_rag_date_filter",
+      "expected_answer": "two alerts per day",
+      "answer": "You want two alerts a day.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "“two alerts a day” is an unambiguous equivalent of “two alerts per day”."
+    },
+    {
+      "question_id": "benign_user_notification",
+      "system": "recency",
+      "expected_answer": "two alerts per day",
+      "answer": "You said two alerts a day is fine.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "“two alerts a day” is an unambiguous equivalent of “two alerts per day”."
+    },
+    {
+      "question_id": "city_cycle_history",
+      "system": "engram",
+      "expected_answer": "Albany, Boston, Albany",
+      "answer": "Your home city changed from Albany to Boston and then back to Albany. It was Albany initially, then changed to Boston, and from then onward it is Albany again.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Albany -> Boston -> Albany in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "city_cycle_history",
+      "system": "hybrid_rag",
+      "expected_answer": "Albany, Boston, Albany",
+      "answer": "Based on the supplied history records, your residence changes are: you reported living in Albany, then moving to Boston, then moving back to Albany and continuing to live there. The records do not provide information about changes to the city itself, only about where you lived. Evidence: you live in Albany [turn:city_cycle:c01:0]; you moved to Boston [turn:city_cycle:c02:0]; you moved back to Albany [turn:city_cycle:c03:0]; you continue to live in Albany [turn:city_cycle:c08:0].",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Albany -> Boston -> Albany in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "city_cycle_history",
+      "system": "hybrid_rag_date_filter",
+      "expected_answer": "Albany, Boston, Albany",
+      "answer": "Based on the supplied history records, your residence changes are: you reported living in Albany, then moving to Boston, then moving back to Albany and continuing to live there. The records do not provide information about changes to the city itself, only about where you lived. Evidence: you live in Albany [turn:city_cycle:c01:0]; you moved to Boston [turn:city_cycle:c02:0]; you moved back to Albany [turn:city_cycle:c03:0]; you continue to live in Albany [turn:city_cycle:c08:0].",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Albany -> Boston -> Albany in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "city_cycle_history",
+      "system": "recency",
+      "expected_answer": "Albany, Boston, Albany",
+      "answer": "Based on the supplied turns, your reported home city changed as follows in the available history: you reported living in Albany, then moving to Boston, then moving back to Albany, and later continuing to live in Albany. The history provided is not complete, so this is not an exhaustive timeline.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Albany -> Boston -> Albany in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "editor_history",
+      "system": "engram",
+      "expected_answer": "Cedar, Maple, Cedar",
+      "answer": "Your editor preference changed as follows: you started with Cedar, then switched to Maple, then switched back to Cedar where it remains.\n\n* Cedar was your editor from 1768867200.0 until 1771545600.0. [fact:plan_cycle:a01:0:fact:0]\n* You switched to Maple from 1771545600.0 until 1773964800.0. [fact:plan_cycle:a02:0:fact:0]\n* You switched back to Cedar from 1773964800.0 onward, with a later confirmation that you still use Cedar for editing. [fact:plan_cycle:a03:0:fact:0]",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Cedar -> Maple -> Cedar in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "editor_history",
+      "system": "hybrid_rag",
+      "expected_answer": "Cedar, Maple, Cedar",
+      "answer": "Based on the supplied history records, your editor choice changed as follows in the available turns:\n\n* You first indicated a plan to use Cedar: \"I plan to use the Cedar editor.\" [turn:plan_cycle:a01:0]\n* Later you switched away from Cedar: \"I switched to Maple for editing.\" [turn:plan_cycle:a02:0]\n* After that you switched back: \"I switched back to Cedar.\" [turn:plan_cycle:a03:0]\n* A later turn notes completion of setup with Cedar: \"I finished the Cedar editor setup.\" [turn:plan_cycle:a07:0]\n* The most recent supplied turn states continued use of Cedar: \"I still use Cedar for editing.\" [turn:plan_cycle:a10:0]\n\nThe reader context notes the timeline is not complete and the evidence is ordered by relevance, not a full history, so this is a partial view of changes over time.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Cedar -> Maple -> Cedar in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "editor_history",
+      "system": "hybrid_rag_date_filter",
+      "expected_answer": "Cedar, Maple, Cedar",
+      "answer": "Based on the supplied history records, your editor choice changed as follows in the available turns:\n\n* You first indicated a plan to use Cedar: \"I plan to use the Cedar editor.\" [turn:plan_cycle:a01:0]\n* Later you switched away from Cedar: \"I switched to Maple for editing.\" [turn:plan_cycle:a02:0]\n* After that you switched back: \"I switched back to Cedar.\" [turn:plan_cycle:a03:0]\n* A later turn notes completion of setup with Cedar: \"I finished the Cedar editor setup.\" [turn:plan_cycle:a07:0]\n* The most recent supplied turn states continued use of Cedar: \"I still use Cedar for editing.\" [turn:plan_cycle:a10:0]\n\nThe reader context notes the timeline is not complete and the evidence is ordered by relevance, not a full history, so this is a partial view of changes over time.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Cedar -> Maple -> Cedar in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "editor_history",
+      "system": "recency",
+      "expected_answer": "Cedar, Maple, Cedar",
+      "answer": "Based on the supplied history records, your editor mentions are:\n- You planned to use the Cedar editor. [turn:plan_cycle:a01:0]\n- Later you switched to Maple for editing. [turn:plan_cycle:a02:0]\n- Later you switched back to Cedar. [turn:plan_cycle:a03:0]\n- You later finished the Cedar editor setup. [turn:plan_cycle:a07:0]\n- Most recently in the supplied records you said you still use Cedar for editing. [turn:plan_cycle:a10:0]\n\nThe timeline is not marked complete and the evidence set is not a complete history, so changes outside these recorded turns are not shown.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "Answer states Cedar -> Maple -> Cedar in prose; grader required the exact comma-delimited phrase."
+    },
+    {
+      "question_id": "restore_current",
+      "system": "hybrid_rag",
+      "expected_answer": "quarterly",
+      "answer": "Your restore testing cadence is every quarter.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "“every quarter” is an unambiguous equivalent of “quarterly”."
+    },
+    {
+      "question_id": "restore_current",
+      "system": "hybrid_rag_date_filter",
+      "expected_answer": "quarterly",
+      "answer": "Your restore testing cadence is every quarter.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "“every quarter” is an unambiguous equivalent of “quarterly”."
+    },
+    {
+      "question_id": "restore_current",
+      "system": "recency",
+      "expected_answer": "quarterly",
+      "answer": "You test restores every quarter.",
+      "original_correct": false,
+      "regraded_correct": true,
+      "reason": "“every quarter” is an unambiguous equivalent of “quarterly”."
+    }
+  ],
+  "original_accuracy": {
+    "engram": {
+      "successes": 26,
+      "trials": 38,
+      "rate": 0.6842105263157895,
+      "ci95": [
+        0.5134729455939784,
+        0.8249746610988733
+      ]
+    },
+    "hybrid_rag": {
+      "successes": 22,
+      "trials": 38,
+      "rate": 0.5789473684210527,
+      "ci95": [
+        0.4082144541199051,
+        0.7369017627485157
+      ]
+    },
+    "hybrid_rag_date_filter": {
+      "successes": 19,
+      "trials": 38,
+      "rate": 0.5,
+      "ci95": [
+        0.3337890061130966,
+        0.6662109938869034
+      ]
+    },
+    "recency": {
+      "successes": 19,
+      "trials": 38,
+      "rate": 0.5,
+      "ci95": [
+        0.3337890061130966,
+        0.6662109938869034
+      ]
+    }
+  },
+  "regraded_accuracy": {
+    "engram": {
+      "successes": 28,
+      "trials": 38,
+      "rate": 0.7368421052631579,
+      "ci95": [
+        0.5689917562977604,
+        0.8659662769750265
+      ]
+    },
+    "hybrid_rag": {
+      "successes": 26,
+      "trials": 38,
+      "rate": 0.6842105263157895,
+      "ci95": [
+        0.5134729455939784,
+        0.8249746610988733
+      ]
+    },
+    "hybrid_rag_date_filter": {
+      "successes": 23,
+      "trials": 38,
+      "rate": 0.6052631578947368,
+      "ci95": [
+        0.4338615386095295,
+        0.7596121063559647
+      ]
+    },
+    "recency": {
+      "successes": 23,
+      "trials": 38,
+      "rate": 0.6052631578947368,
+      "ci95": [
+        0.4338615386095295,
+        0.7596121063559647
+      ]
+    }
+  },
+  "paired_original": {
+    "hybrid_rag": {
+      "overall": {
+        "n": 38,
+        "engram_only_correct": 6,
+        "baseline_only_correct": 2,
+        "discordant": 8,
+        "mcnemar_exact_two_sided_p": 0.2890625
+      },
+      "temporal": {
+        "n": 10,
+        "engram_only_correct": 1,
+        "baseline_only_correct": 1,
+        "discordant": 2,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "security": {
+        "n": 11,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 1,
+        "discordant": 4,
+        "mcnemar_exact_two_sided_p": 0.625
+      },
+      "benign_controls": {
+        "n": 15,
+        "engram_only_correct": 2,
+        "baseline_only_correct": 0,
+        "discordant": 2,
+        "mcnemar_exact_two_sided_p": 0.5
+      },
+      "abstention": {
+        "n": 2,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      }
+    },
+    "hybrid_rag_date_filter": {
+      "overall": {
+        "n": 38,
+        "engram_only_correct": 8,
+        "baseline_only_correct": 1,
+        "discordant": 9,
+        "mcnemar_exact_two_sided_p": 0.0390625
+      },
+      "temporal": {
+        "n": 10,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 0,
+        "discordant": 3,
+        "mcnemar_exact_two_sided_p": 0.25
+      },
+      "security": {
+        "n": 11,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 1,
+        "discordant": 4,
+        "mcnemar_exact_two_sided_p": 0.625
+      },
+      "benign_controls": {
+        "n": 15,
+        "engram_only_correct": 2,
+        "baseline_only_correct": 0,
+        "discordant": 2,
+        "mcnemar_exact_two_sided_p": 0.5
+      },
+      "abstention": {
+        "n": 2,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      }
+    },
+    "recency": {
+      "overall": {
+        "n": 38,
+        "engram_only_correct": 9,
+        "baseline_only_correct": 2,
+        "discordant": 11,
+        "mcnemar_exact_two_sided_p": 0.0654296875
+      },
+      "temporal": {
+        "n": 10,
+        "engram_only_correct": 2,
+        "baseline_only_correct": 1,
+        "discordant": 3,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "security": {
+        "n": 11,
+        "engram_only_correct": 4,
+        "baseline_only_correct": 1,
+        "discordant": 5,
+        "mcnemar_exact_two_sided_p": 0.375
+      },
+      "benign_controls": {
+        "n": 15,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 0,
+        "discordant": 3,
+        "mcnemar_exact_two_sided_p": 0.25
+      },
+      "abstention": {
+        "n": 2,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      }
+    }
+  },
+  "paired_regraded_sensitivity": {
+    "hybrid_rag": {
+      "overall": {
+        "n": 38,
+        "engram_only_correct": 4,
+        "baseline_only_correct": 2,
+        "discordant": 6,
+        "mcnemar_exact_two_sided_p": 0.6875
+      },
+      "temporal": {
+        "n": 10,
+        "engram_only_correct": 1,
+        "baseline_only_correct": 1,
+        "discordant": 2,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "security": {
+        "n": 11,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 1,
+        "discordant": 4,
+        "mcnemar_exact_two_sided_p": 0.625
+      },
+      "benign_controls": {
+        "n": 15,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "abstention": {
+        "n": 2,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      }
+    },
+    "hybrid_rag_date_filter": {
+      "overall": {
+        "n": 38,
+        "engram_only_correct": 6,
+        "baseline_only_correct": 1,
+        "discordant": 7,
+        "mcnemar_exact_two_sided_p": 0.125
+      },
+      "temporal": {
+        "n": 10,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 0,
+        "discordant": 3,
+        "mcnemar_exact_two_sided_p": 0.25
+      },
+      "security": {
+        "n": 11,
+        "engram_only_correct": 3,
+        "baseline_only_correct": 1,
+        "discordant": 4,
+        "mcnemar_exact_two_sided_p": 0.625
+      },
+      "benign_controls": {
+        "n": 15,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "abstention": {
+        "n": 2,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      }
+    },
+    "recency": {
+      "overall": {
+        "n": 38,
+        "engram_only_correct": 7,
+        "baseline_only_correct": 2,
+        "discordant": 9,
+        "mcnemar_exact_two_sided_p": 0.1796875
+      },
+      "temporal": {
+        "n": 10,
+        "engram_only_correct": 2,
+        "baseline_only_correct": 1,
+        "discordant": 3,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "security": {
+        "n": 11,
+        "engram_only_correct": 4,
+        "baseline_only_correct": 1,
+        "discordant": 5,
+        "mcnemar_exact_two_sided_p": 0.375
+      },
+      "benign_controls": {
+        "n": 15,
+        "engram_only_correct": 1,
+        "baseline_only_correct": 0,
+        "discordant": 1,
+        "mcnemar_exact_two_sided_p": 1.0
+      },
+      "abstention": {
+        "n": 2,
+        "engram_only_correct": 0,
+        "baseline_only_correct": 0,
+        "discordant": 0,
+        "mcnemar_exact_two_sided_p": 1.0
+      }
+    }
+  }
+}

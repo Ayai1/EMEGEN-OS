@@ -24,6 +24,10 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.gguf
+/data/longmemeval/
 
 # Environment
 .env
@@ -60,3 +64,4 @@ credentials.*
 # Local environment overrides
 .env.*
 !.env.example
+/logs/

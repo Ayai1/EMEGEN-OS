@@ -39,6 +39,11 @@ _COLLAPSE_WS = re.compile(r'\s+')
 # Articles to remove at start
 _ARTICLES = re.compile(r'^(the|a|an)\s+', re.IGNORECASE)
 
+# Optional ingestion-only aliases; mappings use exact normalized slot pairs.
+SLOT_ALIAS_TABLE: dict[tuple[str, str], tuple[str, str]] = {
+    ("user", "city"): ("user", "home_city"),
+}
+
 
 def normalize_value(value: str | None) -> str:
     """Normalize a fact value for comparison.
@@ -78,7 +83,9 @@ def normalize_value(value: str | None) -> str:
     return result
 
 
-def normalize_slot_name(entity: str, attribute: str) -> tuple[str, str]:
+def normalize_slot_name(
+    entity: str, attribute: str, *, use_aliases: bool = False
+) -> tuple[str, str]:
     """Normalize entity and attribute names for slot comparison.
 
     Converts to lowercase snake_case and strips extra whitespace.
@@ -102,4 +109,7 @@ def normalize_slot_name(entity: str, attribute: str) -> tuple[str, str]:
         s = s.strip('_')
         return s
 
-    return _normalize_part(entity), _normalize_part(attribute)
+    normalized = (_normalize_part(entity), _normalize_part(attribute))
+    if type(use_aliases) is not bool:
+        raise TypeError("use_aliases must be a bool")
+    return SLOT_ALIAS_TABLE.get(normalized, normalized) if use_aliases else normalized

@@ -103,6 +103,8 @@ def initialize_database(
         conn.executescript(f"BEGIN IMMEDIATE;\n{schema_sql}\nCOMMIT;")
         conn.execute("BEGIN IMMEDIATE")
         _ensure_embedding_content_hash_column(conn)
+        _ensure_llm_cache_attribution_columns(conn)
+        _rebuild_budget_summary_view(conn)
         _backfill_fact_observations(conn)
         conn.commit()
     except BaseException:
@@ -183,3 +185,50 @@ def _ensure_embedding_content_hash_column(conn: sqlite3.Connection) -> None:
     }
     if "content_hash" not in columns:
         conn.execute("ALTER TABLE embeddings ADD COLUMN content_hash TEXT")
+
+
+def _ensure_llm_cache_attribution_columns(conn: sqlite3.Connection) -> None:
+    """Add run/phase attribution to databases created by earlier builds."""
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(llm_cache)").fetchall()
+    }
+    if "phase_tag" not in columns:
+        conn.execute(
+            "ALTER TABLE llm_cache ADD COLUMN phase_tag TEXT NOT NULL DEFAULT 'unspecified'"
+        )
+    if "run_id" not in columns:
+        conn.execute(
+            "ALTER TABLE llm_cache ADD COLUMN run_id TEXT NOT NULL DEFAULT 'unspecified'"
+        )
+    ledger_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(llm_call_ledger)").fetchall()
+    }
+    if "model" not in ledger_columns:
+        conn.execute(
+            "ALTER TABLE llm_call_ledger ADD COLUMN model TEXT NOT NULL DEFAULT 'unspecified'"
+        )
+
+
+def _rebuild_budget_summary_view(conn: sqlite3.Connection) -> None:
+    """Keep summaries inclusive of failed costs and outstanding reservations."""
+    conn.execute("DROP VIEW IF EXISTS budget_summary")
+    conn.execute(
+        """CREATE VIEW budget_summary AS
+           SELECT task_tag, model, phase_tag, run_id, COUNT(*) AS api_calls,
+                  SUM(in_tokens) AS total_in_tokens,
+                  SUM(out_tokens) AS total_out_tokens,
+                  ROUND(SUM(credits_spent), 4) AS credits_spent,
+                  ROUND(SUM(credits_reserved), 4) AS credits_reserved
+           FROM (
+             SELECT task_tag, model, phase_tag, run_id, in_tokens, out_tokens,
+                    cost_credits AS credits_spent, 0.0 AS credits_reserved
+             FROM llm_cache
+             UNION ALL
+             SELECT task_tag, model, phase_tag, run_id, 0 AS in_tokens, 0 AS out_tokens,
+                    CASE WHEN status='failed' THEN actual_credits ELSE 0.0 END,
+                    CASE WHEN status='reserved' THEN reserved_credits ELSE 0.0 END
+             FROM llm_call_ledger WHERE status IN ('reserved','failed')
+           ) GROUP BY task_tag, model, phase_tag, run_id"""
+    )

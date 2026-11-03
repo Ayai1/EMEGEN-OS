@@ -180,7 +180,7 @@ END;
 -- to hit the live API while still recording token and credit spend in llm_cache.
 CREATE TABLE IF NOT EXISTS llm_cache (
   model         TEXT NOT NULL,
-  prompt_hash   TEXT NOT NULL,               -- sha256 of full rendered prompt text
+  prompt_hash   TEXT NOT NULL,               -- sha256 of complete canonical generation request
   temperature   REAL NOT NULL,
   cache_nonce   TEXT NOT NULL DEFAULT '',    -- '' for normal cached calls; 'det_run_2' when bypass_cache=True
   task_tag      TEXT NOT NULL DEFAULT 'unspecified',
@@ -190,20 +190,50 @@ CREATE TABLE IF NOT EXISTS llm_cache (
   out_tokens    INTEGER NOT NULL DEFAULT 0,
   cost_credits  REAL NOT NULL DEFAULT 0.0,   -- computed at insert from model rate card
   latency_ms    INTEGER,
+  phase_tag     TEXT NOT NULL DEFAULT 'unspecified',
+  run_id        TEXT NOT NULL DEFAULT 'unspecified',
   created_at    REAL NOT NULL,
   PRIMARY KEY (model, prompt_hash, temperature, cache_nonce)
 );
 
+-- Reservations make concurrent paid requests count against caps before the
+-- provider call begins. Failed calls are charged conservatively at their
+-- reservation when provider usage is unavailable.
+CREATE TABLE IF NOT EXISTS llm_call_ledger (
+  call_id          TEXT PRIMARY KEY,
+  request_key      TEXT NOT NULL,
+  model            TEXT NOT NULL DEFAULT 'unspecified',
+  task_tag         TEXT NOT NULL,
+  phase_tag        TEXT NOT NULL,
+  run_id           TEXT NOT NULL,
+  reserved_credits REAL NOT NULL CHECK (reserved_credits >= 0),
+  actual_credits   REAL NOT NULL DEFAULT 0 CHECK (actual_credits >= 0),
+  status           TEXT NOT NULL CHECK (status IN ('reserved','succeeded','failed')),
+  started_at       REAL NOT NULL,
+  finished_at      REAL,
+  error_type       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_call_inflight_request
+  ON llm_call_ledger(request_key) WHERE status = 'reserved';
+CREATE INDEX IF NOT EXISTS idx_llm_call_ledger_phase_status
+  ON llm_call_ledger(phase_tag, status);
+
 CREATE VIEW IF NOT EXISTS budget_summary AS
-SELECT
-  task_tag,
-  model,
-  COUNT(*) AS api_calls,
-  SUM(in_tokens) AS total_in_tokens,
-  SUM(out_tokens) AS total_out_tokens,
-  ROUND(SUM(cost_credits), 4) AS credits_spent
-FROM llm_cache
-GROUP BY task_tag, model;
+SELECT task_tag, model, phase_tag, run_id, COUNT(*) AS api_calls,
+       SUM(in_tokens) AS total_in_tokens, SUM(out_tokens) AS total_out_tokens,
+       ROUND(SUM(credits_spent), 4) AS credits_spent,
+       ROUND(SUM(credits_reserved), 4) AS credits_reserved
+FROM (
+  SELECT task_tag, model, phase_tag, run_id, in_tokens, out_tokens,
+         cost_credits AS credits_spent, 0.0 AS credits_reserved
+  FROM llm_cache
+  UNION ALL
+  SELECT task_tag, model, phase_tag, run_id, 0 AS in_tokens, 0 AS out_tokens,
+         CASE WHEN status='failed' THEN actual_credits ELSE 0.0 END AS credits_spent,
+         CASE WHEN status='reserved' THEN reserved_credits ELSE 0.0 END AS credits_reserved
+  FROM llm_call_ledger WHERE status IN ('reserved','failed')
+)
+GROUP BY task_tag, model, phase_tag, run_id;
 
 -- 6. Evaluation results (full reproducibility columns) ------------------------
 CREATE TABLE IF NOT EXISTS eval_runs (
@@ -226,6 +256,33 @@ CREATE TABLE IF NOT EXISTS eval_runs (
   created_at           REAL NOT NULL,
   PRIMARY KEY (run_id, system, question_id)
 );
+
+-- Per-system question detail for the authored security-led memory evaluation.
+-- Kept separate so the existing eval_runs contract remains unchanged.
+CREATE TABLE IF NOT EXISTS eval_question_results (
+  run_id              TEXT NOT NULL,
+  system              TEXT NOT NULL,
+  question_id         TEXT NOT NULL,
+  axis                TEXT NOT NULL,
+  answer_text         TEXT NOT NULL,
+  abstained           INTEGER NOT NULL CHECK (abstained IN (0,1)),
+  cited_ids_json      TEXT NOT NULL,
+  retrieved_ids_json  TEXT NOT NULL,
+  expected_answer     TEXT,
+  expected_label      TEXT NOT NULL,
+  correct             INTEGER NOT NULL CHECK (correct IN (0,1)),
+  gate_outcome_json   TEXT,
+  prompt_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (prompt_tokens >= 0),
+  completion_tokens   INTEGER NOT NULL DEFAULT 0 CHECK (completion_tokens >= 0),
+  latency_ms          INTEGER NOT NULL DEFAULT 0 CHECK (latency_ms >= 0),
+  cost_credits        REAL NOT NULL DEFAULT 0.0 CHECK (cost_credits >= 0),
+  cache_request_hash  TEXT,
+  PRIMARY KEY (run_id, system, question_id),
+  FOREIGN KEY (run_id, system, question_id)
+    REFERENCES eval_runs(run_id, system, question_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_eval_question_axis
+  ON eval_question_results(run_id, axis, system);
 
 -- 2b. Lossless slot observations used to rebuild normalized intervals --------
 -- `facts` is the interval projection. Coalescing adjacent equal values there

@@ -25,6 +25,7 @@ from engramOS.temporal import (  # noqa: E402
     get_facts_as_of,
     insert_fact,
     rebuild_slot_projection,
+    TemporalBoundary,
 )
 from engramOS.gate import evaluate_and_record_turn  # noqa: E402
 from tests.test_gate import FakeEvaluator, outcome  # noqa: E402
@@ -404,6 +405,26 @@ class TemporalMemoryTests(unittest.TestCase):
             [(row["observation_id"], row["valid_at"], row["effective_at"]) for row in effective_times],
             [("multi-a", 100.0, 100.0), ("multi-b", 200.0, 200.0)],
         )
+
+    def test_exclusive_as_of_boundary_selects_left_limit_without_epsilon(self) -> None:
+        self.write(self.make_fact("boundary-old", 100.0, "Paris"))
+        self.write(self.make_fact("boundary-new", 200.0, "Rome"))
+
+        checks = (
+            (TemporalBoundary(math.nextafter(200.0, 0.0)), [("boundary-old", "Paris")]),
+            (TemporalBoundary(200.0, inclusive=False), [("boundary-old", "Paris")]),
+            (TemporalBoundary(200.0, inclusive=True), [("boundary-new", "Rome")]),
+            (TemporalBoundary(math.nextafter(200.0, math.inf)), [("boundary-new", "Rome")]),
+        )
+        for boundary, expected in checks:
+            with self.subTest(boundary=boundary):
+                rows = get_facts_as_of(
+                    self.database, "history-1", boundary,
+                    entity="user", attribute="city",
+                )
+                self.assertEqual(
+                    [(row["fact_id"], row["value"]) for row in rows], expected
+                )
 
     def test_multi_tied_order_is_deterministic_across_insertion_orders(self) -> None:
         facts = (
