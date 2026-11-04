@@ -219,13 +219,23 @@ providers with `--mode`.
 .\.venv\Scripts\python.exe scripts\run_eval.py --mode local --embedding none --database eval\local-q4-no-embedding.sqlite3 --run-id q4-local-lexical-v1 --suite eval\suite_v2.json
 ```
 
-The v3 post-hoc runner is implemented; its evaluation is pending. It defaults
-to BGE and keeps strict-untrusted mode and slot aliases off. Its smoke command
-is:
+The v3 post-hoc runner is implemented. Its BGE smoke, lexical-only smoke,
+8-question held-out suite, and 38-question Engram suite have now run. The full
+Engram continuation scored **34/38 (89.47%)** with zero provider failures;
+held-out scored **8/8 for each system**. The three-question BGE and
+lexical-only smoke runs each scored **1/3** under the suite's exact substring
+judge; both answered the attack control correctly, while the two A-to-B-to-A
+answers missed the exact expected substring. These are small post-hoc results,
+not a general security claim. See the saved [v3 evaluation details](docs/TESTING.md)
+and [full Engram result](eval/results_posthoc_v3_engram-resume-v1.json).
+
+The runner defaults to BGE and keeps strict-untrusted mode and slot aliases
+off. Its smoke command is:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_posthoc_v3.py --database eval\local-q4-posthoc-v3.sqlite3 --run-id q4-post-hoc-v3-smoke --preset smoke
 ```
 
 Run `scripts/run_posthoc_v3.py --help` for the full-suite and held-out
-commands. V3 results are post-hoc and have not been run.
+commands. The completed evaluation used separate databases for the BGE smoke,
+lexical-only smoke, and held-out suite.

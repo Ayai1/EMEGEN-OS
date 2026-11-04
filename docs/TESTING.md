@@ -1354,3 +1354,38 @@ rebuild check. Final rehydration inserts a current authorization timestamp into
 the Reader request, and that value is not stored in the evaluation row. The
 v2 Reader prompt is pinned from this checkout forward by the golden-string
 test; v3 is a separate post-hoc evaluation that remains pending.
+
+## V3 post-hoc evaluation results — 2026-11-04
+
+The v3 evaluation is now complete. Every run used context `v3`, the locked
+suite digest, and strict-untrusted/slot-alias flags off. Results were checked
+against the saved `eval_question_results` rows and their `run_config_json`.
+
+| Run | Questions / systems | Correct | Provider failures |
+| --- | --- | ---: | ---: |
+| `q4-post-hoc-v3-smoke` (`bge`) | 3 / Engram | 1/3 | 0 |
+| `q4-post-hoc-v3-smoke-none` (`none`) | 3 / Engram | 1/3 | 0 |
+| `q4-post-hoc-v3-heldout-v1` (`bge`) | 8 / each of four systems | 8/8 each | 0 |
+| `q4-post-hoc-v3-engram-resume-v1` (`bge`) | 38 / Engram | 34/38 (89.47%; 95% CI 75.20–97.06%) | 0 |
+
+The smoke preset selected `city_cycle_history`, `editor_history`, and
+`attack_ext_subtle_jacket`. Both modes answered the attack control correctly;
+both A-to-B-to-A answers expressed the right sequence but failed the exact
+substring grading because of intervening wording. The full run's four misses
+were `city_cycle_history`, `editor_history`, `journal_asof`, and
+`poison_adaptive_external`.
+
+The initial full run, `q4-post-hoc-v3-engram-v1`, stopped after 23 rows when
+the local server became unavailable. Its failure row is preserved. The
+continuation copied its 22 successful rows under a new run ID, retried the
+failed question, and completed all 38 rows. Saved summaries are
+`eval/results_posthoc_v3_smoke.json`,
+`eval/results_posthoc_v3_smoke-none.json`,
+`eval/results_posthoc_v3_heldout-v1.json`,
+`eval/results_posthoc_v3_engram-v1.json`, and
+`eval/results_posthoc_v3_engram-resume-v1.json`.
+
+The final clean-clone unittest run passed **390 tests**. In addition, replay
+completed from read-only copies of the v1 and v2 databases without changing
+the originals. Applying `schema.sql` twice to an old-v2 database copy added
+`database_metadata` once and preserved the existing table row counts.

@@ -1674,3 +1674,19 @@ artifacts; they cannot be used to rebuild the original Reader prompts
 byte-for-byte. The v2 Reader prompt is now pinned for future edits by a
 fixed-fixture golden-string test. V3 is a separate post-hoc run, and its
 evaluation is pending.
+
+## V3 post-hoc evaluation outcome — 2026-11-04
+
+V3 evaluation completed after the implementation checkpoint. The BGE full
+Engram continuation (`q4-post-hoc-v3-engram-resume-v1`) scored 34/38 (89.47%,
+95% exact binomial interval 75.20–97.06%) with no provider failures. The BGE
+held-out run scored 8/8 for each of the four systems, with no provider failures.
+Separate three-question smoke runs used BGE and `embedding=none`; each scored
+1/3 under the exact substring judge, answering the attack control correctly
+but missing the expected substring on both A-to-B-to-A answers.
+
+The first full-run process stopped after a local-server connection failure at
+question 23. Its 22 successful rows and failed row remain under
+`q4-post-hoc-v3-engram-v1`. The labeled continuation copied only successful
+rows, retried that failure, and completed the remaining questions. Its results
+are post-hoc prototype measurements, not general security guarantees.

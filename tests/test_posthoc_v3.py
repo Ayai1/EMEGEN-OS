@@ -120,10 +120,12 @@ class PosthocV3GuardTests(unittest.TestCase):
                 build_parser().parse_args(["--help"])
         self.assertEqual(raised.exception.code, 0)
         help_text = output.getvalue()
-        self.assertIn("scripts/local_server.ps1", help_text)
+        self.assertIn("scripts/local_server.ps1 -GpuLayers 32", help_text)
         self.assertIn("--preset smoke", help_text)
         self.assertIn("q4-post-hoc-v3-engram-v1", help_text)
         self.assertIn("suite_v2_heldout.json", help_text)
+        self.assertIn("--expect-suite-sha256 6b9a2a48e7d2dec311e7064de4b2adbb717ab8a67372a7590f1595f450a2c823", help_text)
+        self.assertIn("--expect-suite-sha256 5c64470c0773d9bb4b2d672b1a207c24959784f7cb5e7539497b02ef03dc5b85", help_text)
 
     def test_cli_defaults_keep_v3_gate_alias_and_embedding_settings(self) -> None:
         args = build_parser().parse_args([

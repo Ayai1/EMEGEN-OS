@@ -34,19 +34,19 @@ DEFAULT_SUITE = PROJECT_ROOT / "eval" / "suite_v2.json"
 HELP_COMMANDS = """Commands (run in separate terminals/shells as indicated):
 
 1. Start the local server:
-   powershell -ExecutionPolicy Bypass -File scripts/local_server.ps1
+   powershell -ExecutionPolicy Bypass -File scripts/local_server.ps1 -GpuLayers 32
 
 2. Run the smoke preset (two A-to-B-to-A questions plus attack_ext_subtle_jacket):
-   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3.sqlite3 --run-id q4-post-hoc-v3-smoke --preset smoke --embedding bge
+   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3.sqlite3 --run-id q4-post-hoc-v3-smoke --preset smoke --embedding bge --expect-suite-sha256 6b9a2a48e7d2dec311e7064de4b2adbb717ab8a67372a7590f1595f450a2c823
 
 3. Run the same smoke preset without an embedding model, in its own database:
-   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3-none.sqlite3 --run-id q4-post-hoc-v3-smoke-none --preset smoke --embedding none
+   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3-none.sqlite3 --run-id q4-post-hoc-v3-smoke-none --preset smoke --embedding none --expect-suite-sha256 6b9a2a48e7d2dec311e7064de4b2adbb717ab8a67372a7590f1595f450a2c823
 
 4. Run the held-out suite across all four systems in a separate database:
-   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3-heldout.sqlite3 --run-id q4-post-hoc-v3-heldout-v1 --suite eval\\suite_v2_heldout.json --systems recency hybrid_rag hybrid_rag_date_filter engram --embedding bge
+   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3-heldout.sqlite3 --run-id q4-post-hoc-v3-heldout-v1 --suite eval\\suite_v2_heldout.json --systems recency hybrid_rag hybrid_rag_date_filter engram --embedding bge --expect-suite-sha256 5c64470c0773d9bb4b2d672b1a207c24959784f7cb5e7539497b02ef03dc5b85
 
 5. Run the full 38-question Engram suite after the smoke results look sane:
-   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3.sqlite3 --run-id q4-post-hoc-v3-engram-v1 --resume --embedding bge"""
+   .\\.venv\\Scripts\\python.exe scripts\\run_posthoc_v3.py --database eval\\local-q4-posthoc-v3.sqlite3 --run-id q4-post-hoc-v3-engram-v1 --resume --embedding bge --expect-suite-sha256 6b9a2a48e7d2dec311e7064de4b2adbb717ab8a67372a7590f1595f450a2c823"""
 
 
 def build_parser() -> argparse.ArgumentParser:
