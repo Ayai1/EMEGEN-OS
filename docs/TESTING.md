@@ -1389,3 +1389,19 @@ The final clean-clone unittest run passed **390 tests**. In addition, replay
 completed from read-only copies of the v1 and v2 databases without changing
 the originals. Applying `schema.sql` twice to an old-v2 database copy added
 `database_metadata` once and preserved the existing table row counts.
+
+## Demo page, replay, and preflight
+
+The demo additions use fake providers and temporary databases in
+`tests/test_demo.py`. Coverage includes fresh-database/path guards, trusted
+supersession, A→B→A history, one-signal external storage, real two-signal gate
+quarantine before extraction, Reader evidence/citations, fixed and default
+authorization timestamps, and a subprocess check that `--embedding none`
+constructs the service and retrieves a fixture fact without importing
+`torch` or `sentence_transformers`. Additional checks compare generated claims
+to the saved JSON, check the local-only page structure, and protect recording
+overwrite behavior. The full suite passes **403 tests**.
+
+The page and server are implemented; no separate v3 demo evaluation or
+recording has been run. Results displayed on the page come from the labeled
+saved v1, v2, and v3 result artifacts.

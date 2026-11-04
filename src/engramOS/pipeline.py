@@ -66,6 +66,7 @@ def answer_query(
     turn_candidate_limit: int = 50,
     fact_candidate_limit: int = 50,
     context_version: Literal["v2", "v3"] = "v3",
+    authorization_timestamp: float | None = None,
 ) -> QueryAnswerOutcome:
     """Run the guarded Stage 4 flow; no answer is persisted to memory."""
     try:
@@ -133,6 +134,7 @@ def answer_query(
             database, history_id, result, ordered_ids,
             as_of=classification.as_of,
             history_range=classification.history_range,
+            authorization_timestamp=authorization_timestamp,
             timeout=timeout,
         )
         evidence = _label_unverified_evidence(tuple(

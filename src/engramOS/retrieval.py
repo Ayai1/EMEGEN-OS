@@ -749,6 +749,7 @@ def rehydrate_reader_candidates(
     *,
     as_of: object | None = None,
     history_range: TemporalRange | None = None,
+    authorization_timestamp: float | None = None,
     timeout: float = 5.0,
 ) -> RehydratedCandidates:
     """Revalidate only the original IDs and rebuild their text/provenance in a fresh snapshot."""
@@ -780,7 +781,9 @@ def rehydrate_reader_candidates(
         conn.execute(
             "SELECT 1 FROM turns WHERE history_id = ? LIMIT 1", (history_id,)
         ).fetchone()
-        authorization_timestamp = time.time()
+        authorization_timestamp = (
+            time.time() if authorization_timestamp is None else authorization_timestamp
+        )
         eligible_turn_ids = _eligible_turn_ids(conn, history_id, requested_turns)
         if result.view == "current" and eligible_turn_ids:
             eligible_turn_ids -= _non_authoritative_conflict_turn_ids(

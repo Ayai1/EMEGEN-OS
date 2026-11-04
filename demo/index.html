@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>EngramOS — time-aware memory demo</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f5f3ee; --panel:#fffefa; --ink:#202b38; --muted:#5a6874; --line:#d5d9d7; --accent:#176b63; --soft:#e5f0ec; --warn:#8d4b12; --bad:#922e35; --good:#155d46; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#151a20; --panel:#1e252d; --ink:#edf1f2; --muted:#b1bdc4; --line:#3d4953; --accent:#79c8b5; --soft:#243b38; --warn:#ffc27e; --bad:#ff9b9c; --good:#8be0bd; } }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--bg); color:var(--ink); line-height:1.55; }
+    a { color:var(--accent); text-underline-offset:.18em; }
+    a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible { outline:3px solid #eea63b; outline-offset:3px; }
+    .topbar { position:sticky; top:0; z-index:5; background:var(--panel); border-bottom:1px solid var(--line); }
+    .nav { max-width:1160px; margin:auto; padding:.7rem 1rem; display:flex; align-items:center; gap:1rem; overflow:auto; white-space:nowrap; }
+    .brand { font-weight:800; letter-spacing:.02em; margin-right:auto; }
+    .nav a { font-size:.9rem; text-decoration:none; }
+    main { max-width:1160px; margin:auto; padding:1.2rem 1rem 4rem; }
+    section { padding:2.2rem 0; scroll-margin-top:4rem; border-bottom:1px solid var(--line); }
+    h1,h2,h3 { line-height:1.2; }
+    h1 { font-size:clamp(2rem,5vw,3.7rem); max-width:16ch; margin:.2rem 0 1rem; }
+    h2 { font-size:clamp(1.55rem,3vw,2.25rem); margin:.1rem 0 1rem; }
+    h3 { font-size:1.12rem; }
+    .lede { max-width:68ch; color:var(--muted); font-size:1.08rem; }
+    .eyebrow { color:var(--accent); font-weight:750; text-transform:uppercase; letter-spacing:.1em; font-size:.78rem; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:1rem; min-width:0; }
+    .panel h3 { margin:.1rem 0 .75rem; }
+    .tag { display:inline-block; padding:.2rem .55rem; border:1px solid var(--line); border-radius:999px; font-size:.79rem; font-weight:700; }
+    .modebar { display:flex; flex-wrap:wrap; gap:.55rem; align-items:center; margin:1rem 0; }
+    .badge { font-weight:850; letter-spacing:.04em; padding:.3rem .65rem; border-radius:5px; border:2px solid currentColor; }
+    .live { color:var(--good); }
+    .recorded { color:var(--warn); }
+    button { background:var(--accent); border:1px solid var(--accent); color:#fff; border-radius:8px; font:inherit; font-weight:700; padding:.58rem .85rem; cursor:pointer; }
+    button.secondary { background:transparent; color:var(--ink); border-color:var(--line); }
+    button:disabled { opacity:.55; cursor:wait; }
+    textarea,input,select { width:100%; padding:.65rem; border:1px solid var(--line); border-radius:8px; color:var(--ink); background:var(--panel); font:inherit; }
+    textarea { min-height:8rem; resize:vertical; }
+    label { display:block; font-weight:700; margin:.6rem 0 .25rem; }
+    .preset-list { display:flex; gap:.45rem; flex-wrap:wrap; margin:.7rem 0; }
+    .preset-list button { font-size:.86rem; }
+    .signal-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; }
+    .signal { border:1px solid var(--line); border-radius:8px; padding:.55rem; }
+    .signal strong,.signal span { display:block; }
+    .signal span { color:var(--muted); font-size:.86rem; }
+    .result-list { padding-left:1.25rem; }
+    .result-list li { margin:.4rem 0; }
+    .timeline-item { border-left:3px solid var(--accent); padding:.2rem .7rem .6rem; margin:.3rem 0; }
+    .interval { color:var(--muted); font-size:.9rem; }
+    .answer { font-size:1.14rem; font-weight:700; }
+    .small { color:var(--muted); font-size:.9rem; }
+    .notice { background:var(--soft); border-radius:10px; padding:.8rem; }
+    .error { color:var(--bad); font-weight:700; }
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; min-width:600px; }
+    th,td { text-align:left; padding:.6rem; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { font-size:.9rem; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+    pre { overflow:auto; background:var(--bg); padding:.7rem; border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .architecture { width:100%; height:auto; margin:1rem 0; }
+    .svg-box { fill:var(--panel); stroke:var(--accent); stroke-width:2; }
+    .svg-text { fill:var(--ink); font:14px system-ui,sans-serif; }
+    .svg-small { fill:var(--muted); font:11px system-ui,sans-serif; }
+    .svg-line { stroke:var(--muted); stroke-width:2; fill:none; marker-end:url(#arrow); }
+    .replay-event { border:1px solid var(--line); border-radius:10px; padding:.75rem; margin:.7rem 0; }
+    .replay-event .badge { margin-bottom:.45rem; }
+    .footer { color:var(--muted); padding-top:1.5rem; }
+    @media(max-width:700px) { .grid { grid-template-columns:1fr; } .nav { gap:.7rem; } .brand { display:none; } .signal-row { grid-template-columns:1fr; } }
+    @media(max-width:400px) { main { padding-inline:.75rem; } .panel { padding:.8rem; } .nav a { font-size:.82rem; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <nav class="nav" aria-label="Page sections">
+      <span class="brand">EngramOS</span>
+      <a href="#problem">Problem</a><a href="#architecture">Architecture</a><a href="#live-demo">Demo</a><a href="#results">Results</a><a href="#scope-safety">Scope &amp; safety</a>
+    </nav>
+  </header>
+  <main>
+    <section id="problem" aria-labelledby="problem-heading">
+      <p class="eyebrow">Time-aware conversational memory</p>
+      <h1 id="problem-heading">Facts change. Memory needs a history.</h1>
+      <p class="lede">Persistent agents can keep an old value after a person updates it, or accept a conflicting claim from a document. EngramOS records where a fact came from, when it applied, and whether an incoming turn was quarantined.</p>
+      <div class="notice">This page demonstrates neutral personal facts such as a home city and editor preference. A local SQLite database holds each demo session.</div>
+    </section>
+
+    <section id="architecture" aria-labelledby="architecture-heading">
+      <p class="eyebrow">What EngramOS does</p>
+      <h2 id="architecture-heading">A gated, temporal memory path</h2>
+      <p>Facts are stored in named slots with provenance and bitemporal validity. A later fact can supersede an earlier one while preserving the old interval. Queries can ask for a current value, a value as of a date, or the ordered history.</p>
+      <svg class="architecture" viewBox="0 0 1040 210" role="img" aria-labelledby="diagram-title diagram-desc">
+        <title id="diagram-title">EngramOS request and memory flow</title>
+        <desc id="diagram-desc">Ingested turns pass through a deterministic gate and Muse Glimmer extraction into a temporal store. Retrieval and a Muse Glimmer Reader produce a cited answer. Optional BGE-M3 embeddings support retrieval.</desc>
+        <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="currentColor"></path></marker></defs>
+        <path class="svg-line" d="M130 85 H168 M300 85 H338 M470 85 H508 M640 85 H678 M810 85 H848"></path>
+        <rect class="svg-box" x="8" y="48" width="122" height="74" rx="12"></rect><text class="svg-text" x="69" y="80" text-anchor="middle">Ingest</text><text class="svg-small" x="69" y="101" text-anchor="middle">turn + provenance</text>
+        <rect class="svg-box" x="168" y="48" width="132" height="74" rx="12"></rect><text class="svg-text" x="234" y="78" text-anchor="middle">Gate</text><text class="svg-small" x="234" y="100" text-anchor="middle">deterministic</text>
+        <rect class="svg-box" x="338" y="48" width="132" height="74" rx="12"></rect><text class="svg-text" x="404" y="78" text-anchor="middle">Extract</text><text class="svg-small" x="404" y="100" text-anchor="middle">Muse Glimmer</text>
+        <rect class="svg-box" x="508" y="48" width="132" height="74" rx="12"></rect><text class="svg-text" x="574" y="78" text-anchor="middle">Temporal store</text><text class="svg-small" x="574" y="100" text-anchor="middle">slots + intervals</text>
+        <rect class="svg-box" x="678" y="48" width="132" height="74" rx="12"></rect><text class="svg-text" x="744" y="78" text-anchor="middle">Retrieval</text><text class="svg-small" x="744" y="100" text-anchor="middle">FTS5 + optional BGE</text>
+        <rect class="svg-box" x="848" y="48" width="180" height="74" rx="12"></rect><text class="svg-text" x="938" y="78" text-anchor="middle">Reader → cited answer</text><text class="svg-small" x="938" y="100" text-anchor="middle">Muse Glimmer model</text>
+        <text class="svg-small" x="234" y="154" text-anchor="middle">Deterministic gate · 3 signals · quarantine at 2/3</text>
+        <text class="svg-small" x="404" y="132" text-anchor="middle">Muse Glimmer extractor</text>
+        <text class="svg-small" x="938" y="132" text-anchor="middle">Muse Glimmer Reader</text>
+        <text class="svg-small" x="744" y="154" text-anchor="middle">BGE-M3: non-Meta, optional; replaced by --embedding none</text>
+        <text class="svg-small" x="574" y="184" text-anchor="middle">Muse Glimmer classifier routes current, as-of, and history queries</text>
+      </svg>
+      <div class="grid">
+        <article class="panel" aria-label="Ingestion gate stages"><h3>Ingestion</h3><p>The deterministic gate evaluates bridge, policy, and source signals before extraction. In the default mode, an untrusted turn with one fired signal is stored but remains unverified. Two fired signals quarantine it.</p></article>
+        <article class="panel" aria-label="Query stages"><h3>Question answering</h3><p>The classifier selects current, as-of, or history view. Retrieval returns eligible evidence, then the Reader returns an answer with citations or abstains. Hybrid retrieval is a comparison baseline in the saved evaluations.</p></article>
+      </div>
+    </section>
+
+    <section id="live-demo" aria-labelledby="demo-heading">
+      <p class="eyebrow">Interactive local session</p>
+      <h2 id="demo-heading">Run or replay the scenario</h2>
+      <div class="modebar" aria-live="polite"><span id="mode-badge" class="badge live">LIVE</span><span class="tag">Embedding: <span id="embedding-mode">loading</span></span><span id="model-label" class="small"></span></div>
+      <div class="grid">
+        <div>
+          <article class="panel" aria-label="Turn input panel">
+            <h3>Send a turn</h3>
+            <div id="preset-list" class="preset-list" aria-label="Scenario presets"></div>
+            <label for="turn-text">Turn text</label><textarea id="turn-text"></textarea>
+            <div class="grid">
+              <div><label for="turn-role">Role</label><select id="turn-role"><option>user</option><option>tool</option><option>assistant</option><option>system</option></select></div>
+              <div><label for="turn-source">Source type</label><select id="turn-source"><option>user_turn</option><option>external_doc</option><option>tool</option><option>assistant_turn</option><option>system_policy</option></select></div>
+            </div>
+            <button id="send-turn">Ingest turn</button> <button id="reset" class="secondary">Reset session</button>
+            <h3>Ask about memory</h3>
+            <label for="question-text">Question</label><input id="question-text" type="text">
+            <button id="ask-question">Ask</button>
+            <p id="api-message" class="small" role="status" aria-live="polite"></p>
+          </article>
+          <article class="panel" aria-label="Replay controls panel" style="margin-top:1rem">
+            <h3>Recorded session</h3>
+            <p id="recording-message" class="small">Checking for a recording…</p>
+            <label for="replay-speed">Playback speed <span id="speed-value">1×</span></label>
+            <input id="replay-speed" type="range" min="0.5" max="3" step="0.5" value="1">
+            <button id="play-recording" class="secondary">Play recording</button>
+          </article>
+        </div>
+        <div>
+          <article class="panel" aria-label="Gate decision panel"><h3>Gate decision</h3><div id="gate-result" class="small">Send a turn to see its gate decision.</div></article>
+          <article class="panel" aria-label="Extracted facts panel" style="margin-top:1rem"><h3>Extracted facts</h3><div id="facts-result" class="small">No turn yet.</div></article>
+          <article class="panel" aria-label="Validity timeline panel" style="margin-top:1rem"><h3>Slot history</h3><div id="timeline-result" class="small">Ingest facts to build a timeline.</div></article>
+          <article class="panel" aria-label="Evidence and answer panel" style="margin-top:1rem"><h3>Retrieved evidence</h3><div id="evidence-result" class="small">Ask a question to inspect evidence.</div><h3>Answer</h3><div id="answer-result" class="small">No answer yet.</div></article>
+          <article class="panel" aria-label="Session state panel" style="margin-top:1rem"><h3>Session state</h3><div id="state-result" class="small">Loading…</div></article>
+          <article class="panel" aria-label="Recorded playback panel" style="margin-top:1rem"><h3>Playback</h3><div id="replay-result" class="small">A replay will appear here one event at a time.</div></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="results" aria-labelledby="results-heading">
+      <p class="eyebrow">Saved evaluation artifacts</p>
+      <h2 id="results-heading">Results and limits</h2>
+      <p class="lede">The table only renders values available in the checked-in result summaries. Each row includes its artifact path and evaluation label.</p>
+      <div class="table-wrap"><table aria-label="Evaluation claims"><thead><tr><th>Measure</th><th>Result</th><th>Label</th><th>Source</th></tr></thead><tbody id="claims-body"></tbody></table></div>
+      <div class="grid" style="margin-top:1rem">
+        <article class="panel" aria-label="Measured limits panel"><h3>What the benchmark does not measure</h3><ul id="limits-list"></ul><p class="small" id="limits-source"></p></article>
+        <article class="panel" aria-label="Interpretation panel"><h3>How to read this</h3><p>These small authored samples describe recorded prototype runs. They do not establish extraction quality, broad generalization, or real-world attack prevalence. V3 accuracy is displayed only when its result file is present.</p></article>
+      </div>
+    </section>
+
+    <section id="scope-safety" aria-labelledby="scope-heading">
+      <p class="eyebrow">Scope, safety, and licenses</p>
+      <h2 id="scope-heading">A local demo with clear boundaries</h2>
+      <p>EngramOS stores and retrieves user-stated facts. It does not provide medical, mental-health, legal, or financial advice and does not make personality assessments.</p>
+      <p class="notice">Demo-only: single-user local SQLite, no authentication, and no encryption at rest. The role and source labels are supplied by the caller.</p>
+      <p>Project files: <a href="../README.md">README.md</a> · <a href="../LICENSES.md">LICENSES.md</a></p>
+      <article class="panel" aria-label="Run it yourself instructions">
+        <h3>Run it yourself</h3>
+        <p>Meta models only, with lexical FTS5 retrieval:</p>
+        <pre>.\.venv\Scripts\python.exe demo\server.py --mode live --embedding none</pre>
+        <p>Muse Glimmer plus optional non-Meta BGE-M3 retrieval embeddings:</p>
+        <pre>.\.venv\Scripts\python.exe demo\server.py --mode live --embedding bge</pre>
+        <p>Play a saved session without contacting a provider:</p>
+        <pre>.\.venv\Scripts\python.exe demo\server.py --mode replay --embedding none</pre>
+        <p>Save the scripted session and run checks:</p>
+        <pre>.\.venv\Scripts\python.exe demo\record_session.py
+.\.venv\Scripts\python.exe scripts\preflight.py</pre>
+      </article>
+    </section>
+    <p class="footer">The demo interface and its standard-library server were built during the hackathon.</p>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    let scenario = {steps:[]};
+    let recording = null;
+    let currentMode = null;
+    let busy = false;
+    async function api(path, options={}) {
+      const response = await fetch(path, {headers:{"Content-Type":"application/json"}, ...options});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      return data;
+    }
+    function setBusy(value) { busy = value; document.querySelectorAll("button").forEach((button) => { const readOnlyAction=currentMode === "replay" && ["send-turn","ask-question","reset"].includes(button.id); button.disabled = value || readOnlyAction; }); }
+    function setMessage(text, error=false) { $("api-message").textContent = text; $("api-message").className = error ? "error" : "small"; }
+    function badgeText() { return $("mode-badge").textContent; }
+    function gatePanel(data) {
+      const s = data.signals || {};
+      const signal = (key,label) => `<div class="signal"><strong>${label}</strong><span>${s[key]?.fired ? "FIRED" : "NOT FIRED"}</span></div>`;
+      $("gate-result").innerHTML = `<p><strong>${esc(data.decision || "Recorded")}</strong> · ${esc(data.signals_fired ?? "—")}/3 signals fired</p><div class="signal-row">${signal("bridge","Bridge")}${signal("policy","Policy")}${signal("source","Source")}</div><p>${esc(data.reason || "")}</p><p class="tag">${data.state === "quarantined" ? "QUARANTINED" : "STORED"}</p>`;
+    }
+    function renderFacts(items) {
+      if (!items?.length) { $("facts-result").textContent = "No extracted facts (the turn may have been quarantined)."; return; }
+      $("facts-result").innerHTML = `<ul class="result-list">${items.map((f)=>`<li>${esc(f.entity)}.${esc(f.attribute)} = <strong>${esc(f.value)}</strong> <span class="small">(${esc(f.kind || "fact")})</span></li>`).join("")}</ul>`;
+    }
+    function renderTimeline(items) {
+      if (!items?.length) { $("timeline-result").textContent = "No facts in this slot yet."; return; }
+      $("timeline-result").innerHTML = items.map((f)=>`<div class="timeline-item"><strong>${esc(f.value)}</strong><div class="interval">valid ${esc(f.valid_from)} → ${f.valid_until == null ? "current" : esc(f.valid_until)}${f.superseded_by ? ` · superseded by ${esc(f.superseded_by)}` : ""}</div></div>`).join("");
+    }
+    function renderEvidence(items) {
+      if (!items?.length) { $("evidence-result").textContent = "No evidence returned."; return; }
+      $("evidence-result").innerHTML = `<ol class="result-list">${items.map((item)=>`<li><strong>${esc(item.id)}</strong>: ${esc(item.text)}<div class="small">Source: ${esc(item.source)} · Trust: ${esc(item.trust)} · ${item.quarantined ? "QUARANTINED" : "not quarantined"}</div><div class="small">Provenance: ${esc(JSON.stringify(item.provenance || []))}</div></li>`).join("")}</ol>`;
+    }
+    function renderAnswer(data) {
+      $("answer-result").innerHTML = `<p class="answer">${esc(data.answer || "I don't know.")}</p><p>Citations: ${esc((data.citations || []).join(", ") || "none")}</p><p>Latency: ${Number(data.latency_seconds || 0).toFixed(3)} seconds</p><p class="small">Route: ${esc(data.classification?.view || "none")} · ${esc(data.classification?.route || data.reader_reason || data.status || "")}</p>`;
+    }
+    async function refreshState() {
+      const state = await api("/api/state");
+      currentMode = state.mode;
+      $("mode-badge").textContent = state.mode === "replay" ? "RECORDED RUN, not live" : "LIVE";
+      $("mode-badge").className = `badge ${state.mode === "replay" ? "recorded" : "live"}`;
+      $("embedding-mode").textContent = state.embedding;
+      $("model-label").textContent = `Classifier, extractor, Reader: ${state.models.classifier}; embeddings: ${state.models.embeddings}`;
+      const slots = state.current_slots || [];
+      $("state-result").innerHTML = `<p>Current slots: ${slots.length}</p><ul>${slots.map((f)=>`<li>${esc(f.entity)}.${esc(f.attribute)} = ${esc(f.value)} · trust ${esc(f.trust)}</li>`).join("")}</ul><p>Quarantined turns: ${state.quarantined_turns.length} · gate events: ${state.gate_events.length}</p>`;
+      if (state.gate_events.length) {
+        const last = state.gate_events[state.gate_events.length-1];
+        const signals = {bridge:{fired:Boolean(last.signal_bridge)},policy:{fired:Boolean(last.signal_policy)},source:{fired:Boolean(last.signal_source)}};
+        gatePanel({decision:last.decision,signals_fired:last.signals_fired,signals,reason:`${last.signals_fired}/3 signals fired; decision recorded.`,state:last.decision === "quarantine" ? "quarantined" : "stored"});
+      }
+      return state;
+    }
+    async function refreshTimeline() {
+      const timeline = await api("/api/timeline?slot=user.editor");
+      renderTimeline(timeline.items);
+    }
+    async function loadScenario() {
+      scenario = await api("/api/scenario");
+      const target = $("preset-list");
+      target.innerHTML = "";
+      scenario.steps.forEach((step,index)=>{
+        const button = document.createElement("button"); button.type = "button"; button.className="secondary"; button.textContent=step.label;
+        button.addEventListener("click",()=>{
+          if (step.kind === "ingest") { $("turn-text").value=step.text; $("turn-role").value=step.role; $("turn-source").value=step.source_type; }
+          else { $("question-text").value=step.question; }
+          $("api-message").textContent=`Loaded preset ${index+1}.`;
+        }); target.append(button);
+      });
+    }
+    async function sendTurn() {
+      if (busy) return; setBusy(true);
+      try {
+        const data = await api("/api/ingest", {method:"POST",body:JSON.stringify({text:$("turn-text").value,role:$("turn-role").value,source_type:$("turn-source").value})});
+        gatePanel(data); renderFacts(data.facts); await refreshState(); await refreshTimeline();
+        setMessage(data.state === "quarantined" ? "Turn quarantined before extraction." : "Turn stored and temporal projection refreshed.");
+      } catch (error) { setMessage(error.message,true); }
+      finally { setBusy(false); }
+    }
+    async function askQuestion() {
+      if (busy) return; setBusy(true);
+      try { const data=await api("/api/ask",{method:"POST",body:JSON.stringify({question:$("question-text").value})}); renderEvidence(data.evidence); renderAnswer(data); setMessage("Answer route completed."); }
+      catch(error) { setMessage(error.message,true); }
+      finally { setBusy(false); }
+    }
+    async function loadRecording() {
+      if (currentMode === null) await refreshState();
+      const result=await api("/api/recording");
+      if (!result.available) { $("recording-message").innerHTML=`${esc(result.message)} <code>${esc(result.command)}</code>`; $("play-recording").disabled=true; return; }
+      recording=result.recording;
+      $("recording-message").textContent=`${recording.recorded_at} · mode ${recording.mode} · embedding ${recording.embedding} · ${JSON.stringify(recording.models)}`;
+      if (currentMode !== "replay") { $("recording-message").textContent += " · restart server with --mode replay to play this recording"; $("play-recording").disabled=true; }
+      else { $("play-recording").disabled=false; }
+    }
+    async function playRecording() {
+      if (!recording || busy) return; setBusy(true);
+      $("mode-badge").textContent="RECORDED RUN, not live"; $("mode-badge").className="badge recorded";
+      const events=recording.events || []; const speed=Number($("replay-speed").value);
+      $("replay-result").innerHTML=`<p><span class="badge recorded">RECORDED RUN, not live</span></p><p>${esc(recording.recorded_at)} · mode ${esc(recording.mode)} · ${esc(recording.embedding)}</p>`;
+      for (const event of events) {
+        const panel=document.createElement("article"); panel.className="replay-event"; panel.setAttribute("aria-label",`Recorded event ${event.label}`);
+        panel.innerHTML=`<span class="badge recorded">RECORDED RUN, not live</span><h3>${esc(event.label)}</h3><p class="small">Recording date: ${esc(recording.recorded_at)} · mode ${esc(recording.mode)} · embedding ${esc(recording.embedding)} · models ${esc(JSON.stringify(recording.models))}</p><p class="small">Recorded latency: ${Number(event.latency_seconds||0).toFixed(3)} seconds</p><pre>${esc(JSON.stringify(event.response,null,2))}</pre>`;
+        $("replay-result").append(panel);
+        const response=event.response || {};
+        if (response.signals) gatePanel(response);
+        if (response.facts) renderFacts(response.facts);
+        if (response.evidence) renderEvidence(response.evidence);
+        if (response.answer) renderAnswer(response);
+        await new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(event.latency_seconds||0)*1000/speed)));
+      }
+      setBusy(false);
+    }
+    async function loadClaims() {
+      const data=await api("/api/claims");
+      $("claims-body").innerHTML=(data.figures||[]).map((f)=>`<tr><td>${esc(f.name)}</td><td>${esc(f.value)}</td><td>${esc(f.label)}</td><td><code>${esc(f.source)}</code></td></tr>`).join("");
+      $("limits-list").innerHTML=(data.limitations||[]).map((text)=>`<li>${esc(text)}</li>`).join("");
+      $("limits-source").textContent=data.limitations_source ? `Source: ${data.limitations_source}` : "";
+    }
+    $("send-turn").addEventListener("click",sendTurn);
+    $("ask-question").addEventListener("click",askQuestion);
+    $("play-recording").addEventListener("click",playRecording);
+    $("replay-speed").addEventListener("input",()=>$("speed-value").textContent=`${$("replay-speed").value}×`);
+    $("reset").addEventListener("click",async()=>{try{await api("/api/reset",{method:"POST",body:"{}"});setMessage("Fresh local session created.");await refreshState();renderFacts([]);renderTimeline([]);}catch(e){setMessage(e.message,true);}});
+    Promise.all([loadScenario(),loadClaims(),loadRecording(),refreshState(),refreshTimeline()]).catch((error)=>setMessage(error.message,true));
+  </script>
+</body>
+</html>

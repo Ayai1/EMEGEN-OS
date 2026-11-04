@@ -1690,3 +1690,20 @@ question 23. Its 22 successful rows and failed row remain under
 `q4-post-hoc-v3-engram-v1`. The labeled continuation copied only successful
 rows, retried that failure, and completed the remaining questions. Its results
 are post-hoc prototype measurements, not general security guarantees.
+
+## Local demo page and preflight
+
+The single-file demo page uses the standard-library HTTP server and the
+existing local Muse Glimmer provider path. `--embedding none` keeps the live
+demo on FTS5 and temporal projection without importing or loading the BGE
+model; `bge` remains an explicit optional mode. The deterministic gate runs
+before extraction, so an external turn that fires the source and bridge
+signals is quarantined before any extractor request. A demo-only fixed
+authorization timestamp is opt-in; the default Reader timestamp remains the
+current time. Saved evaluation rows are artifacts, not a byte-for-byte prompt
+reproduction, because the default timestamp changes between runs.
+
+The v3 runner remains implemented with the previously recorded post-hoc
+results. The interactive demo has not been evaluated as a separate run. The
+submission preflight validates tracked artifacts, README and demo claims, then
+runs the unit suite; the recorded test count after these additions is 403.

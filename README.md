@@ -239,3 +239,66 @@ off. Its smoke command is:
 Run `scripts/run_posthoc_v3.py --help` for the full-suite and held-out
 commands. The completed evaluation used separate databases for the BGE smoke,
 lexical-only smoke, and held-out suite.
+
+## Demo
+
+The EngramOS demo page and its standard-library server were built during the
+hackathon. The v3 runner is implemented; the saved v3 evaluation is labeled
+post-hoc. The page reports only figures found in the saved result files.
+
+### Run instructions for the demo
+
+From a fresh clone, create the Python environment and install the project and
+test dependencies with these PowerShell commands:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+Then use the following commands from the repository root. For a live session
+with Meta models only, start the app with `--embedding none`; this uses FTS5 and
+temporal projection without loading BGE-M3:
+
+```powershell
+.\.venv\Scripts\python.exe demo\server.py --mode live --embedding none
+```
+
+For live BGE-M3 retrieval embeddings, start the app this way:
+
+```powershell
+.\.venv\Scripts\python.exe demo\server.py --mode live --embedding bge
+```
+
+The live app uses Muse Glimmer from the local llama-server for classification,
+fact extraction, and the Reader. Start that server in another terminal when
+running live:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/local_server.ps1 -GpuLayers 32
+```
+
+Open `http://127.0.0.1:8765/` in a local browser. To save the scripted neutral
+session after the server is up, run:
+
+```powershell
+.\.venv\Scripts\python.exe demo\record_session.py
+```
+
+Replay the saved session without a provider using:
+
+```powershell
+.\.venv\Scripts\python.exe demo\server.py --mode replay --embedding none
+```
+
+The page shows a persistent `RECORDED RUN, not live` badge during playback.
+The recorder refuses to replace an existing session unless `--force` is set.
+For repeatable Reader cache identity in a demo, optionally supply `--fixed-now`
+with an epoch timestamp or ISO date/time. The default uses the current time.
+
+Run the submission preflight from a clean clone after following these README
+setup instructions:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\preflight.py
+```
