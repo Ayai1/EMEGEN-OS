@@ -195,7 +195,7 @@ print(json.dumps({"torch": "torch" in sys.modules, "sentence_transformers": "sen
 
 class DemoArtifactTests(unittest.TestCase):
     def test_claims_json_matches_claims_built_from_result_files(self) -> None:
-        actual = json.loads((ROOT / "demo" / "data" / "claims.json").read_text(encoding="utf-8"))
+        actual = json.loads((ROOT / "demo" / "claims.json").read_text(encoding="utf-8"))
         self.assertEqual(actual, build_claims.build_claims())
 
     def test_page_has_required_sections_no_external_resources_or_rag_application_phrase(self) -> None:

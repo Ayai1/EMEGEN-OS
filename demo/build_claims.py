@@ -75,7 +75,7 @@ def build_claims() -> dict[str, Any]:
 
 
 def main() -> int:
-    output = ROOT / "demo" / "data" / "claims.json"
+    output = ROOT / "demo" / "claims.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(build_claims(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Wrote {output.relative_to(ROOT)}")

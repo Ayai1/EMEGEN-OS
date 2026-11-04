@@ -230,7 +230,7 @@ class DemoService:
         return {"available": True, "recording": json.loads(path.read_text(encoding="utf-8"))}
 
     def claims(self) -> dict[str, Any]:
-        path = PROJECT_ROOT / "demo" / "data" / "claims.json"
+        path = PROJECT_ROOT / "demo" / "claims.json"
         if not path.is_file():
             return {"figures": [], "limitations": []}
         return json.loads(path.read_text(encoding="utf-8"))

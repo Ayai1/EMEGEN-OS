@@ -21,7 +21,7 @@ _SECRET_PATTERNS = (
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
     ("private-key header", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
     ("non-empty model API key assignment", re.compile(
-        r"(?im)^\s*(?:MODEL_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY)\s*=\s*(?!\s*(?:#|$))[^\r\n]+"
+        r"(?im)^[ \t]*(?:MODEL_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY)[ \t]*=[ \t]*(?!#)(?=\S)[^\r\n]*$"
     )),
 )
 
@@ -179,7 +179,15 @@ def check_artifact_hashes(checks: Checks, tracked: list[str]) -> None:
             mismatches.append(f"{relative} missing")
             continue
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual != expected:
+        raw = path.read_bytes()
+        lf_bytes = raw.replace(b"\r\n", b"\n")
+        crlf_bytes = lf_bytes.replace(b"\n", b"\r\n")
+        equivalent_hashes = {
+            actual,
+            hashlib.sha256(lf_bytes).hexdigest(),
+            hashlib.sha256(crlf_bytes).hexdigest(),
+        }
+        if expected not in equivalent_hashes:
             mismatches.append(f"{relative} expected {expected}, found {actual}")
     problems = missing + mismatches
     checks.emit("FAIL" if problems else "PASS", "eval artifact hashes", "; ".join(problems) if problems else f"{len(entries)} manifest rows checked; all tracked eval JSON files covered")
@@ -187,7 +195,7 @@ def check_artifact_hashes(checks: Checks, tracked: list[str]) -> None:
 
 def check_demo(checks: Checks) -> None:
     page = ROOT / "demo" / "index.html"
-    claims_file = ROOT / "demo" / "data" / "claims.json"
+    claims_file = ROOT / "demo" / "claims.json"
     checks.emit("FAIL" if not page.is_file() else "PASS", "demo page present")
     if not claims_file.is_file():
         checks.emit("FAIL", "demo claims present")

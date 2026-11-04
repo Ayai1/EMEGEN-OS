@@ -1,0 +1,107 @@
+{
+  "figures": [
+    {
+      "name": "Engram accuracy",
+      "successes": 26,
+      "trials": 38,
+      "value": "26/38 (68.42%)",
+      "source": "eval/results_q4-locked-classifier1024-resume300-v1.json",
+      "label": "pre-registered v1"
+    },
+    {
+      "name": "hybrid_rag baseline accuracy",
+      "successes": 22,
+      "trials": 38,
+      "value": "22/38 (57.89%)",
+      "source": "eval/results_q4-locked-classifier1024-resume300-v1.json",
+      "label": "pre-registered v1"
+    },
+    {
+      "name": "Engram attack claim adoption",
+      "successes": 5,
+      "trials": 11,
+      "value": "5/11 (45.45%)",
+      "source": "eval/results_q4-locked-classifier1024-resume300-v1.json",
+      "label": "pre-registered v1"
+    },
+    {
+      "name": "Engram accuracy",
+      "successes": 34,
+      "trials": 38,
+      "value": "34/38 (89.47%)",
+      "source": "eval/results_posthoc_v2_engram_v1.json",
+      "label": "post-hoc v2"
+    },
+    {
+      "name": "Engram attack claim adoption",
+      "successes": 1,
+      "trials": 11,
+      "value": "1/11 (9.09%)",
+      "source": "eval/results_posthoc_v2_engram_v1.json",
+      "label": "post-hoc v2"
+    },
+    {
+      "name": "Held-out Engram accuracy",
+      "successes": 8,
+      "trials": 8,
+      "value": "8/8 (100.00%)",
+      "source": "eval/results_posthoc_v2_heldout_v1.json",
+      "label": "post-hoc v2"
+    },
+    {
+      "name": "Held-out hybrid_rag baseline accuracy",
+      "successes": 6,
+      "trials": 8,
+      "value": "6/8 (75.00%)",
+      "source": "eval/results_posthoc_v2_heldout_v1.json",
+      "label": "post-hoc v2"
+    },
+    {
+      "name": "Engram accuracy",
+      "successes": 34,
+      "trials": 38,
+      "value": "34/38 (89.47%)",
+      "source": "eval/results_posthoc_v3_engram-resume-v1.json",
+      "label": "post-hoc v3"
+    },
+    {
+      "name": "Engram attack claim adoption",
+      "successes": 1,
+      "trials": 11,
+      "value": "1/11 (9.09%)",
+      "source": "eval/results_posthoc_v3_engram-resume-v1.json",
+      "label": "post-hoc v3"
+    },
+    {
+      "name": "Main suite questions",
+      "successes": 38,
+      "trials": 38,
+      "value": "38/38",
+      "source": "eval/results_q4-locked-classifier1024-resume300-v1.json",
+      "label": "pre-registered v1"
+    },
+    {
+      "name": "Authored attack cases",
+      "successes": 11,
+      "trials": 11,
+      "value": "11/11",
+      "source": "eval/results_q4-locked-classifier1024-resume300-v1.json",
+      "label": "pre-registered v1"
+    },
+    {
+      "name": "Held-out questions",
+      "successes": 8,
+      "trials": 8,
+      "value": "8/8",
+      "source": "eval/results_posthoc_v2_heldout_v1.json",
+      "label": "post-hoc v2"
+    }
+  ],
+  "limitations": [
+    "Fixture-based evaluation does not measure open-ended extraction quality.",
+    "The gate patterns and thresholds were tuned with the authored attacks.",
+    "The caller supplies role and source_type; the system does not authenticate them.",
+    "The authored samples are small and do not establish generalization or real-world attack prevalence."
+  ],
+  "limitations_source": "docs/ARCHITECTURE.md §15"
+}
