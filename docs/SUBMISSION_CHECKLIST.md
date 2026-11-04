@@ -2,11 +2,11 @@
 
 ## Automated checks
 
-- [ ] Run `scripts/preflight.py` from a clean clone and resolve every FAIL.
-- [ ] Verify the clean clone setup and tests with the exact commands in README:
+- [x] Run `scripts/preflight.py` from a clean clone and resolve every FAIL.
+- [x] Verify the clean clone setup and tests with the exact commands in README:
   `py -3.12 -m venv .venv`, `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"`, then
   `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`.
-- [ ] Confirm the latest commit has no `.sqlite3`, log, `.gguf`, `.env`, or
+- [x] Confirm the latest commit has no `.sqlite3`, log, `.gguf`, `.env`, or
   `data/` files staged or tracked.
 
 ## Manual submission checks
@@ -21,7 +21,7 @@
   wording in the README.
 - [ ] Record the organizer answer about BGE-M3 (save the link or screenshot
   filename) and confirm README explains the Meta-only `--embedding none` mode.
-- [ ] Confirm no keys were committed.
+- [x] Confirm no keys were committed (clean-clone preflight secret scan).
 - [ ] Submit at least two hours before the deadline: Wednesday, November 4,
   9:00 PM ET (7:30 AM IST, November 5).
 

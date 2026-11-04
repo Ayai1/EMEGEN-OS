@@ -128,11 +128,30 @@ def check_readme(checks: Checks) -> None:
     checks.emit("FAIL" if missing else "PASS", "README required headings", ", ".join(missing) if missing else "all present")
     forbidden_phrase = bool(re.search(r"(?i)RAG application", text))
     checks.emit("FAIL" if forbidden_phrase else "PASS", "README wording", "contains forbidden phrase" if forbidden_phrase else "no forbidden application label")
-    advice_lines = [
-        f"line {idx}: {line.strip()}" for idx, line in enumerate(text.splitlines(), 1)
-        if re.search(r"\badvice\b", line, re.I)
-        and not ("does not provide" in line.casefold() and any(term in line.casefold() for term in ("medical", "mental-health", "legal", "financial")))
-    ]
+    advice_lines: list[str] = []
+    current_paragraph: list[tuple[int, str]] = []
+
+    def check_advice_paragraph(paragraph_lines: list[tuple[int, str]]) -> None:
+        if not paragraph_lines:
+            return
+        joined = " ".join(line for _, line in paragraph_lines)
+        if not re.search(r"\badvice\b", joined, re.I):
+            return
+        disclaimer = re.search(
+            r"\bdoes not provide\b.{0,180}\b(?:medical|health|mental-health|legal|financial)\b.{0,80}\badvice\b",
+            joined,
+            re.I,
+        )
+        if disclaimer is None:
+            advice_lines.append(f"line {paragraph_lines[0][0]}: {joined.strip()}")
+
+    for idx, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            current_paragraph.append((idx, line))
+        else:
+            check_advice_paragraph(current_paragraph)
+            current_paragraph = []
+    check_advice_paragraph(current_paragraph)
     checks.emit("WARN" if advice_lines else "PASS", "README advice wording", "; ".join(advice_lines) if advice_lines else "advice appears only in the negated scope statement")
     positive_health = bool(re.search(r"(?i)(?:provides?|offers?|gives?)\s+(?:personalized\s+)?(?:medical|health|mental-health)\s+advice", text))
     checks.emit("FAIL" if positive_health else "PASS", "README health-advice claims", "positive advice wording found" if positive_health else "none")
